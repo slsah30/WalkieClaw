@@ -1,0 +1,767 @@
+# =============================================================================
+# AIPI Lite - WalkieClaw Voice Terminal (Direct-to-VPS via HTTP Polling)
+# =============================================================================
+# Clean rebuild — ESP32 sends UDP audio to VPS, polls HTTP for responses.
+# No WireGuard, no SNTP, no MSI relay. All connections ESP32-initiated.
+#
+# Architecture:
+#   ESP32 --UDP audio--> VPS:12345              (mic PCM + START/STOP markers)
+#   ESP32 --HTTP poll--> VPS:8080/api/response  (check for processed response)
+#   ESP32 <--HTTP GET--- VPS:8080/audio/*.wav   (fetch TTS audio to play)
+#
+# Hardware: ESP32-S3-WROOM-1 (16MB flash, 8MB PSRAM octal)
+#           ES8311 audio codec (I2C ctrl + I2S data)
+#           128x128 TFT LCD (SPI, ST7735)
+#           WS2812 addressable LED, MEMS mic, 8ohm 0.8W speaker
+#
+# Pinout (verified working):
+#   SPI:  CLK=GPIO16, MOSI=GPIO17
+#   LCD:  DC=GPIO7, CS=GPIO15, Reset=GPIO18, Backlight=GPIO3
+#   I2C:  SDA=GPIO5, SCL=GPIO4
+#   I2S:  LRCLK=GPIO12, BCLK=GPIO14, MCLK=GPIO6, DOUT=GPIO11, DIN=GPIO13
+#   LED:  GPIO46 (WS2812)
+#   Speaker Amp: GPIO9
+#   Right Button: GPIO42
+# =============================================================================
+
+substitutions:
+  device_name: "aipi-openclaw-direct"
+  friendly_name: "WalkieClaw"
+  bridge_host: "76.13.126.201"
+  bridge_udp_port: "12345"
+  bridge_http_port: "8080"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  includes:
+    - udp_stream.h
+    - wifi_connect.h
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_on: power_hold
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 0%
+          green: 0%
+          blue: 100%
+      - delay: 2s
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 0%
+          green: 100%
+          blue: 0%
+      - delay: 1s
+      - lambda: |-
+          udp_stream.setup("${bridge_host}", ${bridge_udp_port});
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Ready"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP32S3_SPIRAM_SUPPORT: "y"
+      CONFIG_SPIRAM_MODE_OCT: "y"
+      CONFIG_SPIRAM_SPEED_80M: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# =============================================================================
+# Globals — voice state machine + poll tracking
+# =============================================================================
+# voice_state: 0=IDLE, 1=RECORDING, 2=POLLING, 3=PLAYING, 4=READY_TO_PLAY
+globals:
+  - id: speaker_volume
+    type: float
+    restore_value: true
+    initial_value: '0.75'
+  - id: voice_state
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: poll_count
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: pending_wav_url
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+  - id: play_duration_ms
+    type: int
+    restore_value: false
+    initial_value: '3000'
+
+logger:
+  level: DEBUG
+  logs:
+    component: ERROR
+
+# =============================================================================
+# WiFi
+# =============================================================================
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      priority: 10
+    - ssid: !secret hotspot_ssid
+      password: !secret hotspot_password
+      priority: 0
+  power_save_mode: none
+  ap:
+    ssid: "WalkieClaw-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+# =============================================================================
+# ESPHome API (kept for OTA + best-effort display updates from bridge)
+# =============================================================================
+api:
+  encryption:
+    key: !secret api_encryption_key
+  services:
+    - service: play_tts
+      variables:
+        url: string
+      then:
+        - switch.turn_on: speaker_enable
+        - lambda: |-
+            // Unmute DAC and set volume to 0dB on ES8311
+            uint8_t dac_vol[2] = {0x32, 0x00};
+            id(i2c_bus).write(0x18, dac_vol, 2);
+            uint8_t dac_ctrl[2] = {0x37, 0x08};
+            id(i2c_bus).write(0x18, dac_ctrl, 2);
+        - delay: 50ms
+        - media_player.volume_set:
+            id: openclaw_player
+            volume: !lambda 'return id(speaker_volume);'
+        - media_player.play_media:
+            id: openclaw_player
+            media_url: !lambda 'return url;'
+            announcement: true
+        - lvgl.label.update:
+            id: lbl_action
+            text: "Speaking..."
+
+    - service: update_display
+      variables:
+        status_text: string
+        action_text: string
+        response_text: string
+      then:
+        - lvgl.label.update:
+            id: lbl_status
+            text: !lambda 'return status_text;'
+        - lvgl.label.update:
+            id: lbl_action
+            text: !lambda 'return action_text;'
+        - lambda: |-
+            lv_label_set_text(id(lbl_reply), response_text.c_str());
+            lv_obj_invalidate(id(lbl_reply));
+
+    - service: connect_wifi
+      variables:
+        ssid: string
+        password: string
+      then:
+        - lambda: |-
+            connect_to_wifi(ssid, password);
+        - lvgl.label.update:
+            id: lbl_action
+            text: !lambda |-
+              return "WiFi:" + ssid.substr(0, 10);
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+
+# =============================================================================
+# HTTP Request component (for polling VPS)
+# =============================================================================
+http_request:
+  timeout: 3s
+  useragent: "WalkieClaw/1.0"
+
+# --- I2C Bus (ES8311 codec control) ---
+i2c:
+  id: i2c_bus
+  sda: GPIO5
+  scl: GPIO4
+  scan: true
+  frequency: 400kHz
+
+# --- SPI Bus (128x128 TFT LCD) ---
+spi:
+  clk_pin: GPIO16
+  mosi_pin: GPIO17
+
+# --- Display (ST7735, 128x128) ---
+display:
+  - platform: mipi_spi
+    id: lcd_display
+    model: ST7735
+    dc_pin: GPIO7
+    cs_pin: GPIO15
+    reset_pin: GPIO18
+    dimensions: 128x128
+    rotation: 90
+    invert_colors: true
+    auto_clear_enabled: false
+    update_interval: 1s
+
+lvgl:
+  displays:
+    - lcd_display
+  touchscreens: []
+  pages:
+    - id: main_page
+      widgets:
+        # Row 1: Title centered (y=2)
+        - label:
+            id: lbl_status
+            align: TOP_MID
+            y: 2
+            text: "WalkieClaw"
+            text_color: 0x00FF00
+            text_font: montserrat_14
+        # Row 2: IP + WiFi signal (y=18)
+        - label:
+            id: lbl_ip
+            align: TOP_LEFT
+            x: 2
+            y: 18
+            text: "IP:..."
+            text_color: 0x00BFFF
+            text_font: montserrat_10
+        - label:
+            id: lbl_wifi
+            align: TOP_RIGHT
+            x: -2
+            y: 18
+            text: "W:?"
+            text_color: 0x808080
+            text_font: montserrat_10
+        # Row 3: VPS status (y=29)
+        - label:
+            id: lbl_bridge
+            align: TOP_LEFT
+            x: 2
+            y: 29
+            text: "VPS:..."
+            text_color: 0x505050
+            text_font: montserrat_10
+        - label:
+            id: lbl_connection
+            align: TOP_RIGHT
+            x: -2
+            y: 29
+            text: "..."
+            text_color: 0xFFFF00
+            text_font: montserrat_10
+        # Divider line (y=40)
+        - bar:
+            align: TOP_MID
+            y: 40
+            width: 124
+            height: 1
+            min_value: 0
+            max_value: 100
+            value: 100
+            indicator:
+              bg_color: 0x444444
+        # Action status — bigger font (y=44)
+        - label:
+            id: lbl_action
+            align: TOP_MID
+            y: 44
+            text: "Booting"
+            text_color: 0x00FF00
+            text_font: montserrat_14
+        # Response text — scrolling marquee (y=72)
+        - label:
+            id: lbl_reply
+            align: TOP_LEFT
+            x: 2
+            y: 72
+            width: 124
+            height: 24
+            long_mode: SCROLL_CIRCULAR
+            anim_time: 10s
+            text: " "
+            text_color: 0xFFFF00
+            text_font: montserrat_18
+        # VU meter at very bottom
+        - bar:
+            id: vu_meter
+            align: BOTTOM_MID
+            y: -3
+            width: 120
+            height: 5
+            min_value: 0
+            max_value: 100
+            value: 0
+
+# --- Power Hold (GPIO10) — keeps device alive on battery ---
+switch:
+  - platform: gpio
+    pin: GPIO10
+    id: power_hold
+    name: "Power Hold"
+    restore_mode: ALWAYS_ON
+    internal: true
+
+  # --- LCD Backlight (GPIO3) ---
+  - platform: gpio
+    pin: GPIO3
+    id: lcd_backlight
+    name: "LCD Backlight"
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # --- Speaker Amp Enable (GPIO9) ---
+  - platform: gpio
+    pin: GPIO9
+    id: speaker_enable
+    name: "Speaker Amp"
+    restore_mode: ALWAYS_ON
+
+# --- Status LED (WS2812 on GPIO46) ---
+light:
+  - platform: esp32_rmt_led_strip
+    rgb_order: GRB
+    chipset: WS2812
+    pin: GPIO46
+    num_leds: 1
+    name: "Status LED"
+    id: status_led
+    restore_mode: RESTORE_DEFAULT_ON
+
+# =============================================================================
+# Audio - ES8311 codec via I2C + I2S
+# =============================================================================
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    i2c_id: i2c_bus
+
+i2s_audio:
+  - id: i2s_shared
+    i2s_lrclk_pin: GPIO12
+    i2s_bclk_pin: GPIO14
+    i2s_mclk_pin: GPIO6
+
+# Speaker
+speaker:
+  - platform: i2s_audio
+    id: i2s_speaker
+    i2s_audio_id: i2s_shared
+    i2s_dout_pin: GPIO11
+    dac_type: external
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    channel: mono
+    audio_dac: es8311_dac
+
+# Media player wrapping the speaker
+media_player:
+  - platform: speaker
+    id: openclaw_player
+    name: "WalkieClaw Speaker"
+    buffer_size: 50000
+    announcement_pipeline:
+      speaker: i2s_speaker
+      num_channels: 1
+    files:
+      - id: beep
+        file: "beep.wav"
+
+# Microphone
+microphone:
+  - platform: i2s_audio
+    id: mic_input
+    i2s_audio_id: i2s_shared
+    i2s_din_pin: GPIO13
+    adc_type: external
+    pdm: false
+    on_data:
+      - lambda: |-
+          static int count = 0;
+          if (count++ % 50 == 0) {
+            ESP_LOGW("udp", "Sending %d bytes to bridge", x.size());
+          }
+          udp_stream.send(x.data(), x.size());
+
+# =============================================================================
+# Scripts
+# =============================================================================
+script:
+  - id: play_response
+    mode: single
+    then:
+      - lambda: |-
+          id(voice_state) = 3;  // PLAYING
+      - switch.turn_on: speaker_enable
+      - lambda: |-
+          // Unmute DAC and set volume to 0dB on ES8311
+          uint8_t dac_vol[2] = {0x32, 0x00};
+          id(i2c_bus).write(0x18, dac_vol, 2);
+          uint8_t dac_ctrl[2] = {0x37, 0x08};
+          id(i2c_bus).write(0x18, dac_ctrl, 2);
+      - delay: 50ms
+      - media_player.volume_set:
+          id: openclaw_player
+          volume: !lambda 'return id(speaker_volume);'
+      - media_player.play_media:
+          id: openclaw_player
+          media_url: !lambda 'return id(pending_wav_url);'
+          announcement: true
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Speaking..."
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 100%
+          green: 50%
+          blue: 0%
+      # Wait for playback to finish
+      - delay: !lambda 'return id(play_duration_ms) + 500;'
+      - lambda: |-
+          id(voice_state) = 0;  // IDLE
+          id(pending_wav_url) = "";
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Ready"
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 0%
+          green: 100%
+          blue: 0%
+
+# =============================================================================
+# Buttons
+# =============================================================================
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO42
+      inverted: true
+    name: "Talk Button"
+    id: btn_talk
+    filters:
+      - delayed_on: 200ms
+      - delayed_off: 200ms
+    on_press:
+      - lambda: |-
+          if (id(voice_state) != 0) {
+            ESP_LOGW("btn", "Ignoring press, voice_state=%d", id(voice_state));
+            return;
+          }
+          id(voice_state) = 1;  // RECORDING
+      - if:
+          condition:
+            lambda: 'return id(voice_state) == 1;'
+          then:
+            - light.turn_on:
+                id: status_led
+                brightness: 30%
+                red: 100%
+                green: 0%
+                blue: 0%
+            - lvgl.label.update:
+                id: lbl_action
+                text: "Listening..."
+            - lambda: |-
+                // First 8 chars of bridge_api_key (from secrets.yaml)
+                udp_stream.send_keyed_start("0625fe12");
+            - switch.turn_off: speaker_enable
+            - delay: 100ms
+            - microphone.capture:
+                id: mic_input
+    on_release:
+      - if:
+          condition:
+            lambda: 'return id(voice_state) == 1;'
+          then:
+            - microphone.stop_capture:
+                id: mic_input
+            - lambda: |-
+                udp_stream.send_marker("STOP");
+            - delay: 200ms
+            - switch.turn_on: speaker_enable
+            - lambda: |-
+                id(voice_state) = 2;  // POLLING
+                id(poll_count) = 0;
+            - lvgl.label.update:
+                id: lbl_action
+                text: "Processing..."
+            - light.turn_on:
+                id: status_led
+                brightness: 30%
+                red: 0%
+                green: 0%
+                blue: 100%
+
+  - platform: gpio
+    pin:
+      number: GPIO1
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Volume Button"
+    id: btn_volume
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    on_press:
+      - lambda: |-
+          float vol = id(speaker_volume) + 0.15f;
+          if (vol > 1.0f) vol = 0.15f;
+          id(speaker_volume) = vol;
+          ESP_LOGW("vol", "Volume: %.0f%%", vol * 100);
+      - media_player.volume_set:
+          id: openclaw_player
+          volume: !lambda 'return id(speaker_volume);'
+      - lvgl.label.update:
+          id: lbl_action
+          text: !lambda |-
+            char buf[16];
+            snprintf(buf, sizeof(buf), "Vol: %.0f%%", id(speaker_volume) * 100);
+            return std::string(buf);
+
+  - platform: status
+    name: "Connection Status"
+    id: wifi_status
+    on_state:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: wifi_status
+            then:
+              - lvgl.label.update:
+                  id: lbl_connection
+                  text: "API:OK"
+            else:
+              - lvgl.label.update:
+                  id: lbl_connection
+                  text: "API:OFF"
+
+# =============================================================================
+# Intervals — Polling + Health Check
+# =============================================================================
+interval:
+  # Poll VPS for response every 2s while in POLLING state
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(voice_state) == 2;'
+          then:
+            - lambda: |-
+                id(poll_count) += 1;
+                ESP_LOGI("poll", "Polling VPS... attempt %d", id(poll_count));
+            - http_request.get:
+                url: "http://${bridge_host}:${bridge_http_port}/api/response"
+                request_headers:
+                  X-API-Key: !secret bridge_api_key
+                capture_response: true
+                on_response:
+                  - lambda: |-
+                      if (response->status_code != 200) {
+                        ESP_LOGW("poll", "HTTP %d", response->status_code);
+                        return;
+                      }
+                      ESP_LOGI("poll", "Response: %s", body.substr(0, 120).c_str());
+
+                      // Parse JSON fields — handles "key": "val" (with space after colon)
+                      auto find_json_str = [&](const std::string &key) -> std::string {
+                        std::string needle = "\"" + key + "\"";
+                        size_t pos = body.find(needle);
+                        if (pos == std::string::npos) return "";
+                        pos += needle.length();
+                        // Skip colon and any whitespace
+                        while (pos < body.size() && (body[pos] == ':' || body[pos] == ' ')) pos++;
+                        // Expect opening quote
+                        if (pos >= body.size() || body[pos] != '"') return "";
+                        pos++;  // skip opening quote
+                        size_t end = body.find("\"", pos);
+                        if (end == std::string::npos) return "";
+                        return body.substr(pos, end - pos);
+                      };
+                      auto find_json_num = [&](const std::string &key) -> float {
+                        std::string needle = "\"" + key + "\"";
+                        size_t pos = body.find(needle);
+                        if (pos == std::string::npos) return 0.0f;
+                        pos += needle.length();
+                        // Skip colon and whitespace
+                        while (pos < body.size() && (body[pos] == ':' || body[pos] == ' ')) pos++;
+                        return atof(body.c_str() + pos);
+                      };
+
+                      std::string status = find_json_str("status");
+
+                      if (status == "processing") {
+                        std::string stage = find_json_str("stage");
+                        // Update display with stage
+                        if (stage == "transcribing") {
+                          lv_label_set_text(id(lbl_action), "Transcribing...");
+                        } else if (stage == "thinking") {
+                          lv_label_set_text(id(lbl_action), "Thinking...");
+                        } else if (stage == "speaking") {
+                          lv_label_set_text(id(lbl_action), "Generating...");
+                        }
+                        lv_obj_invalidate(id(lbl_action));
+
+                      } else if (status == "ready") {
+                        std::string wav_url = find_json_str("wav_url");
+                        std::string text = find_json_str("text");
+                        float duration = find_json_num("duration");
+
+                        ESP_LOGI("poll", "Ready! wav=%s dur=%.1f", wav_url.c_str(), duration);
+
+                        id(pending_wav_url) = wav_url;
+                        id(play_duration_ms) = (int)(duration * 1000);
+
+                        // Show response text on display
+                        if (!text.empty()) {
+                          lv_label_set_text(id(lbl_reply), text.c_str());
+                          lv_obj_invalidate(id(lbl_reply));
+                        }
+
+                        // Signal ready-to-play (script runs from separate interval)
+                        id(voice_state) = 4;
+
+                      } else if (status == "idle") {
+                        // Still idle, keep polling
+                      }
+            # Timeout after 15 polls (30s)
+            - if:
+                condition:
+                  lambda: 'return id(poll_count) >= 15 && id(voice_state) == 2;'
+                then:
+                  - lambda: |-
+                      ESP_LOGW("poll", "Poll timeout after %d attempts", id(poll_count));
+                      id(voice_state) = 0;
+                  - lvgl.label.update:
+                      id: lbl_action
+                      text: "Timeout"
+                  - delay: 2s
+                  - lvgl.label.update:
+                      id: lbl_action
+                      text: "Ready"
+                  - light.turn_on:
+                      id: status_led
+                      brightness: 30%
+                      red: 0%
+                      green: 100%
+                      blue: 0%
+
+  # Pick up ready-to-play signal and trigger playback
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(voice_state) == 4;'
+          then:
+            - script.execute: play_response
+
+  # Health check — ping VPS every 30s when idle
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(voice_state) == 0;'
+          then:
+            - http_request.get:
+                url: "http://${bridge_host}:${bridge_http_port}/health"
+                request_headers:
+                  X-API-Key: !secret bridge_api_key
+                capture_response: true
+                on_response:
+                  - lambda: |-
+                      if (response->status_code == 200) {
+                        lv_label_set_text(id(lbl_bridge), "VPS:OK");
+                        lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0x00FF00), 0);
+
+                        // Check for pending WiFi command in health response
+                        auto find_str = [&](const std::string &key) -> std::string {
+                          std::string needle = "\"" + key + "\"";
+                          size_t pos = body.find(needle);
+                          if (pos == std::string::npos) return "";
+                          pos += needle.length();
+                          while (pos < body.size() && (body[pos] == ':' || body[pos] == ' ')) pos++;
+                          if (pos >= body.size() || body[pos] != '"') return "";
+                          pos++;
+                          size_t end = body.find("\"", pos);
+                          if (end == std::string::npos) return "";
+                          return body.substr(pos, end - pos);
+                        };
+                        std::string wifi_ssid = find_str("wifi_ssid");
+                        if (!wifi_ssid.empty()) {
+                          std::string wifi_pass = find_str("wifi_password");
+                          ESP_LOGW("cmd", "WiFi command received: SSID=%s", wifi_ssid.c_str());
+                          connect_to_wifi(wifi_ssid, wifi_pass);
+                          lv_label_set_text(id(lbl_action), ("WiFi:" + wifi_ssid.substr(0, 10)).c_str());
+                          lv_obj_invalidate(id(lbl_action));
+                        }
+                      } else {
+                        lv_label_set_text(id(lbl_bridge), "VPS:ERR");
+                        lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF0000), 0);
+                      }
+                      lv_obj_invalidate(id(lbl_bridge));
+                on_error:
+                  - lambda: |-
+                      lv_label_set_text(id(lbl_bridge), "VPS:DOWN");
+                      lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF0000), 0);
+                      lv_obj_invalidate(id(lbl_bridge));
+
+# --- Diagnostics ---
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_sensor
+    update_interval: 30s
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: lbl_wifi
+            text: !lambda |-
+              if (x > -60) return "W:***";
+              if (x > -75) return "W:**-";
+              return "W:*--";
+  - platform: uptime
+    name: "Uptime"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: wifi_ip
+      on_value:
+        then:
+          - lvgl.label.update:
+              id: lbl_ip
+              text: !lambda 'return "IP:" + x;'
+    ssid:
+      name: "Connected SSID"

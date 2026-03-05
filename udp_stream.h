@@ -27,6 +27,14 @@ class UDPStream {
                   (struct sockaddr*)&dest_, sizeof(dest_));
   }
 
+  void send_keyed_start(const char* key_prefix) {
+    if (!ready_) return;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "START:%s", key_prefix);
+    ::lwip_sendto(sock_, buf, strlen(buf), 0,
+                  (struct sockaddr*)&dest_, sizeof(dest_));
+  }
+
  private:
   int sock_ = -1;
   struct sockaddr_in dest_{};
