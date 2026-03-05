@@ -1,0 +1,20 @@
+# ESPHome build artifacts
+/.esphome/
+
+# Secrets (WiFi passwords, API keys)
+/secrets.yaml
+/production.env
+.env
+
+# Firmware backup (16MB binary)
+*.bin
+
+# Old file backups
+*.old
+
+# Photos
+*.jpg
+*.png
+
+# Reference repos
+/AIPI-Lite-ESPHome/

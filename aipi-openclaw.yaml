@@ -1,0 +1,502 @@
+# =============================================================================
+# AIPI Lite - WalkieClaw Voice Terminal
+# =============================================================================
+# Framework: ESP-IDF (required for octal PSRAM, better audio stability)
+#
+# Hardware: ESP32-S3-WROOM-1 (16MB flash, 8MB PSRAM octal)
+#           ES8311 audio codec (I2C ctrl + I2S data)
+#           128x128 TFT LCD (SPI, ST7735)
+#           WS2812 addressable LED, MEMS mic, 8ohm 0.8W speaker
+#
+# Pinout from sticks918/AIPI-Lite-ESPHome (verified working):
+#   SPI:  CLK=GPIO16, MOSI=GPIO17
+#   LCD:  DC=GPIO7, CS=GPIO15, Reset=GPIO18, Backlight=GPIO3
+#   I2C:  SDA=GPIO5, SCL=GPIO4
+#   I2S:  LRCLK=GPIO12, BCLK=GPIO14, MCLK=GPIO6, DOUT=GPIO11, DIN=GPIO13
+#   LED:  GPIO46 (WS2812)
+#   Speaker Amp: GPIO9
+#   Right Button: GPIO42
+# =============================================================================
+
+substitutions:
+  device_name: "aipi-openclaw"
+  friendly_name: "WalkieClaw"
+  bridge_host: "172.20.5.68"
+  bridge_udp_port: "12345"
+  bridge_http_port: "8080"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  includes:
+    - udp_stream.h
+  on_boot:
+    priority: 800
+    then:
+      # Power hold — latch GPIO0 HIGH immediately to stay alive on battery
+      - switch.turn_on: power_hold
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 0%
+          green: 0%
+          blue: 100%
+      - delay: 2s
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 0%
+          green: 100%
+          blue: 0%
+      - delay: 1s
+      - lambda: |-
+          udp_stream.setup("${bridge_host}", ${bridge_udp_port});
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Ready"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_ESP32S3_SPIRAM_SUPPORT: "y"
+      CONFIG_SPIRAM_MODE_OCT: "y"
+      CONFIG_SPIRAM_SPEED_80M: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+globals:
+  - id: speaker_volume
+    type: float
+    restore_value: true
+    initial_value: '0.75'
+
+logger:
+  level: DEBUG
+  logs:
+    component: ERROR
+
+# =============================================================================
+# WiFi
+# =============================================================================
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      priority: 10
+    - ssid: !secret hotspot_ssid
+      password: !secret hotspot_password
+      priority: 0
+  power_save_mode: none
+  ap:
+    ssid: "WalkieClaw-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  services:
+    - service: play_tts
+      variables:
+        url: string
+      then:
+        - switch.turn_on: speaker_enable
+        - lambda: |-
+            // Unmute DAC and set volume to 0dB on ES8311
+            uint8_t dac_vol[2] = {0x32, 0x00};
+            id(i2c_bus).write(0x18, dac_vol, 2);
+            uint8_t dac_ctrl[2] = {0x37, 0x08};
+            id(i2c_bus).write(0x18, dac_ctrl, 2);
+        - delay: 50ms
+        - media_player.volume_set:
+            id: openclaw_player
+            volume: !lambda 'return id(speaker_volume);'
+        - media_player.play_media:
+            id: openclaw_player
+            media_url: !lambda 'return url;'
+            announcement: true
+        - lvgl.label.update:
+            id: lbl_action
+            text: "Speaking..."
+
+    - service: update_display
+      variables:
+        status_text: string
+        action_text: string
+        response_text: string
+      then:
+        - lvgl.label.update:
+            id: lbl_status
+            text: !lambda 'return status_text;'
+        - lvgl.label.update:
+            id: lbl_action
+            text: !lambda 'return action_text;'
+        - lambda: |-
+            lv_label_set_text(id(lbl_reply), response_text.c_str());
+            lv_obj_invalidate(id(lbl_reply));
+
+    - service: restore_mic
+      then:
+        - media_player.stop:
+            id: openclaw_player
+        - lambda: |-
+            uint8_t data[2] = {0x12, 0x00};
+            id(i2c_bus).write(0x18, data, 2);
+        - delay: 100ms
+        - lambda: |-
+            uint8_t data[2] = {0x12, 0xBF};
+            id(i2c_bus).write(0x18, data, 2);
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+
+# --- I2C Bus (ES8311 codec control) ---
+i2c:
+  id: i2c_bus
+  sda: GPIO5
+  scl: GPIO4
+  scan: true
+  frequency: 400kHz
+
+# --- SPI Bus (128x128 TFT LCD) ---
+spi:
+  clk_pin: GPIO16
+  mosi_pin: GPIO17
+
+# --- Display (ST7735, 128x128) ---
+display:
+  - platform: mipi_spi
+    id: lcd_display
+    model: ST7735
+    dc_pin: GPIO7
+    cs_pin: GPIO15
+    reset_pin: GPIO18
+    dimensions: 128x128
+    rotation: 90
+    invert_colors: true
+    auto_clear_enabled: false
+    update_interval: 1s
+
+lvgl:
+  displays:
+    - lcd_display
+  touchscreens: []
+  pages:
+    - id: main_page
+      widgets:
+        # Row 1: Title centered (y=2)
+        - label:
+            id: lbl_status
+            align: TOP_MID
+            y: 2
+            text: "WalkieClaw"
+            text_color: 0x00FF00
+            text_font: montserrat_14
+        # Row 2: IP + WiFi signal (y=18)
+        - label:
+            id: lbl_ip
+            align: TOP_LEFT
+            x: 2
+            y: 18
+            text: "IP:..."
+            text_color: 0x00BFFF
+            text_font: montserrat_10
+        - label:
+            id: lbl_wifi
+            align: TOP_RIGHT
+            x: -2
+            y: 18
+            text: "W:?"
+            text_color: 0x808080
+            text_font: montserrat_10
+        # Row 3: Bridge + API status (y=29)
+        - label:
+            id: lbl_bridge
+            align: TOP_LEFT
+            x: 2
+            y: 29
+            text: "Brdg:${bridge_host}"
+            text_color: 0x505050
+            text_font: montserrat_10
+        - label:
+            id: lbl_connection
+            align: TOP_RIGHT
+            x: -2
+            y: 29
+            text: "..."
+            text_color: 0xFFFF00
+            text_font: montserrat_10
+        # Divider line (y=40)
+        - bar:
+            align: TOP_MID
+            y: 40
+            width: 124
+            height: 1
+            min_value: 0
+            max_value: 100
+            value: 100
+            indicator:
+              bg_color: 0x444444
+        # Action status — bigger font (y=44)
+        - label:
+            id: lbl_action
+            align: TOP_MID
+            y: 44
+            text: "Booting"
+            text_color: 0x00FF00
+            text_font: montserrat_14
+        # Response text — scrolling marquee (y=72)
+        - label:
+            id: lbl_reply
+            align: TOP_LEFT
+            x: 2
+            y: 72
+            width: 124
+            height: 24
+            long_mode: SCROLL_CIRCULAR
+            anim_time: 10s
+            text: " "
+            text_color: 0xFFFF00
+            text_font: montserrat_18
+        # VU meter at very bottom
+        - bar:
+            id: vu_meter
+            align: BOTTOM_MID
+            y: -3
+            width: 120
+            height: 5
+            min_value: 0
+            max_value: 100
+            value: 0
+
+# --- Power Hold (GPIO10) — keeps device alive on battery ---
+switch:
+  - platform: gpio
+    pin: GPIO10
+    id: power_hold
+    name: "Power Hold"
+    restore_mode: ALWAYS_ON
+    internal: true
+
+  # --- LCD Backlight (GPIO3) ---
+  - platform: gpio
+    pin: GPIO3
+    id: lcd_backlight
+    name: "LCD Backlight"
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # --- Speaker Amp Enable (GPIO9) ---
+  - platform: gpio
+    pin: GPIO9
+    id: speaker_enable
+    name: "Speaker Amp"
+    restore_mode: ALWAYS_ON
+
+# --- Status LED (WS2812 on GPIO46) ---
+light:
+  - platform: esp32_rmt_led_strip
+    rgb_order: GRB
+    chipset: WS2812
+    pin: GPIO46
+    num_leds: 1
+    name: "Status LED"
+    id: status_led
+    restore_mode: RESTORE_DEFAULT_ON
+
+# =============================================================================
+# Audio - ES8311 codec via I2C + I2S
+# =============================================================================
+#   I2S: LRCLK=GPIO12, BCLK=GPIO14, MCLK=GPIO6, DOUT=GPIO11, DIN=GPIO13
+#   Speaker Amp: GPIO9
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    i2c_id: i2c_bus
+
+i2s_audio:
+  - id: i2s_shared
+    i2s_lrclk_pin: GPIO12
+    i2s_bclk_pin: GPIO14
+    i2s_mclk_pin: GPIO6
+
+# Speaker
+speaker:
+  - platform: i2s_audio
+    id: i2s_speaker
+    i2s_audio_id: i2s_shared
+    i2s_dout_pin: GPIO11
+    dac_type: external
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    channel: mono
+    audio_dac: es8311_dac
+
+# Media player wrapping the speaker
+media_player:
+  - platform: speaker
+    id: openclaw_player
+    name: "WalkieClaw Speaker"
+    buffer_size: 50000
+    announcement_pipeline:
+      speaker: i2s_speaker
+      num_channels: 1
+    files:
+      - id: beep
+        file: "beep.wav"
+
+# Microphone
+microphone:
+  - platform: i2s_audio
+    id: mic_input
+    i2s_audio_id: i2s_shared
+    i2s_din_pin: GPIO13
+    adc_type: external
+    pdm: false
+    on_data:
+      - lambda: |-
+          static int count = 0;
+          if (count++ % 50 == 0) {
+            ESP_LOGW("udp", "Sending %d bytes to bridge", x.size());
+          }
+          udp_stream.send(x.data(), x.size());
+
+# =============================================================================
+# Buttons - Right button (GPIO42) is the reliable one
+# =============================================================================
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO42
+      inverted: true
+    name: "Talk Button"
+    id: btn_talk
+    filters:
+      - delayed_on: 200ms
+      - delayed_off: 200ms
+    on_press:
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 100%
+          green: 0%
+          blue: 0%
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Listening..."
+      - lambda: |-
+          udp_stream.send_marker("START");
+      - switch.turn_off: speaker_enable
+      - delay: 100ms
+      - microphone.capture:
+          id: mic_input
+    on_release:
+      - microphone.stop_capture:
+          id: mic_input
+      - lambda: |-
+          udp_stream.send_marker("STOP");
+      - delay: 200ms
+      - switch.turn_on: speaker_enable
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Thinking..."
+      - light.turn_on:
+          id: status_led
+          brightness: 30%
+          red: 0%
+          green: 100%
+          blue: 0%
+      - lvgl.label.update:
+          id: lbl_action
+          text: "Ready"
+
+  - platform: gpio
+    pin:
+      number: GPIO1
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Volume Button"
+    id: btn_volume
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    on_press:
+      - lambda: |-
+          float vol = id(speaker_volume) + 0.15f;
+          if (vol > 1.0f) vol = 0.15f;  // Wrap around
+          id(speaker_volume) = vol;
+          ESP_LOGW("vol", "Volume: %.0f%%", vol * 100);
+      - media_player.volume_set:
+          id: openclaw_player
+          volume: !lambda 'return id(speaker_volume);'
+      - lvgl.label.update:
+          id: lbl_action
+          text: !lambda |-
+            char buf[16];
+            snprintf(buf, sizeof(buf), "Vol: %.0f%%", id(speaker_volume) * 100);
+            return std::string(buf);
+
+  - platform: status
+    name: "Connection Status"
+    id: wifi_status
+    on_state:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: wifi_status
+            then:
+              - lvgl.label.update:
+                  id: lbl_connection
+                  text: "OK"
+            else:
+              - lvgl.label.update:
+                  id: lbl_connection
+                  text: "OFF"
+
+# --- Diagnostics ---
+sensor:
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_signal_sensor
+    update_interval: 30s
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: lbl_wifi
+            text: !lambda |-
+              if (x > -60) return "W:***";
+              if (x > -75) return "W:**-";
+              return "W:*--";
+  - platform: uptime
+    name: "Uptime"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      id: wifi_ip
+      on_value:
+        then:
+          - lvgl.label.update:
+              id: lbl_ip
+              text: !lambda 'return "IP:" + x;'
+    ssid:
+      name: "Connected SSID"
