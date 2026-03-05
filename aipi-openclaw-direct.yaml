@@ -419,6 +419,9 @@ script:
     then:
       - lambda: |-
           id(voice_state) = 3;  // PLAYING
+      - microphone.stop_capture:
+          id: mic_input
+      - delay: 300ms
       - switch.turn_on: speaker_enable
       - lambda: |-
           // Unmute DAC and set volume to 0dB on ES8311
@@ -426,7 +429,7 @@ script:
           id(i2c_bus).write(0x18, dac_vol, 2);
           uint8_t dac_ctrl[2] = {0x37, 0x08};
           id(i2c_bus).write(0x18, dac_ctrl, 2);
-      - delay: 50ms
+      - delay: 100ms
       - media_player.volume_set:
           id: openclaw_player
           volume: !lambda 'return id(speaker_volume);'
@@ -507,7 +510,7 @@ binary_sensor:
                 id: mic_input
             - lambda: |-
                 udp_stream.send_marker("STOP");
-            - delay: 200ms
+            - delay: 500ms
             - switch.turn_on: speaker_enable
             - lambda: |-
                 id(voice_state) = 2;  // POLLING
@@ -658,7 +661,7 @@ interval:
             # Timeout after 15 polls (30s)
             - if:
                 condition:
-                  lambda: 'return id(poll_count) >= 15 && id(voice_state) == 2;'
+                  lambda: 'return id(poll_count) >= 45 && id(voice_state) == 2;'
                 then:
                   - lambda: |-
                       ESP_LOGW("poll", "Poll timeout after %d attempts", id(poll_count));
