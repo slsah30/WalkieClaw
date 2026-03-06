@@ -30,6 +30,7 @@ substitutions:
   bridge_host: "76.13.126.201"
   bridge_udp_port: "12345"
   bridge_http_port: "8080"
+  sleep_timeout_ms: "300000"
 
 esphome:
   name: ${device_name}
@@ -57,6 +58,8 @@ esphome:
       - delay: 1s
       - lambda: |-
           udp_stream.setup("${bridge_host}", ${bridge_udp_port});
+      - lambda: |-
+          id(last_activity_ms) = millis();
       - lvgl.label.update:
           id: lbl_action
           text: "Ready"
@@ -104,6 +107,14 @@ globals:
     type: int
     restore_value: false
     initial_value: '3000'
+  - id: last_activity_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  - id: boot_chime_played
+    type: bool
+    restore_value: false
+    initial_value: 'false'
 
 logger:
   level: DEBUG
@@ -132,6 +143,7 @@ captive_portal:
 # ESPHome API (kept for OTA + best-effort display updates from bridge)
 # =============================================================================
 api:
+  reboot_timeout: 0s
   encryption:
     key: !secret api_encryption_key
   services:
@@ -269,12 +281,12 @@ lvgl:
             text_color: 0x505050
             text_font: montserrat_10
         - label:
-            id: lbl_connection
+            id: lbl_battery
             align: TOP_RIGHT
             x: -2
             y: 29
-            text: "..."
-            text_color: 0xFFFF00
+            text: "BAT"
+            text_color: 0xFFA500
             text_font: montserrat_10
         # Divider line (y=40)
         - bar:
@@ -461,6 +473,40 @@ script:
           green: 100%
           blue: 0%
 
+  - id: play_boot_chime
+    mode: single
+    then:
+      - switch.turn_on: speaker_enable
+      - lambda: |-
+          // Unmute DAC and set volume to 0dB on ES8311
+          uint8_t dac_vol[2] = {0x32, 0x00};
+          id(i2c_bus).write(0x18, dac_vol, 2);
+          uint8_t dac_ctrl[2] = {0x37, 0x08};
+          id(i2c_bus).write(0x18, dac_ctrl, 2);
+      - delay: 50ms
+      - media_player.volume_set:
+          id: openclaw_player
+          volume: !lambda 'return id(speaker_volume);'
+      - lambda: |-
+          // Generate a short 800Hz beep tone (0.15s at 16kHz sample rate)
+          const int sample_rate = 16000;
+          const int duration_ms = 150;
+          const int num_samples = sample_rate * duration_ms / 1000;
+          const float freq = 800.0f;
+          std::vector<uint8_t> pcm(num_samples * 2);
+          for (int i = 0; i < num_samples; i++) {
+            float t = (float)i / sample_rate;
+            // Apply fade envelope to avoid clicks
+            float env = 1.0f;
+            if (i < 200) env = (float)i / 200.0f;
+            if (i > num_samples - 200) env = (float)(num_samples - i) / 200.0f;
+            int16_t sample = (int16_t)(sinf(2.0f * 3.14159f * freq * t) * 16000.0f * env);
+            pcm[i * 2] = sample & 0xFF;
+            pcm[i * 2 + 1] = (sample >> 8) & 0xFF;
+          }
+          id(i2s_speaker).play(pcm.data(), pcm.size());
+      - delay: 300ms
+
 # =============================================================================
 # Buttons
 # =============================================================================
@@ -476,6 +522,7 @@ binary_sensor:
       - delayed_off: 200ms
     on_press:
       - lambda: |-
+          id(last_activity_ms) = millis();
           if (id(voice_state) != 0) {
             ESP_LOGW("btn", "Ignoring press, voice_state=%d", id(voice_state));
             return;
@@ -539,6 +586,7 @@ binary_sensor:
       - delayed_off: 100ms
     on_press:
       - lambda: |-
+          id(last_activity_ms) = millis();
           float vol = id(speaker_volume) + 0.15f;
           if (vol > 1.0f) vol = 0.15f;
           id(speaker_volume) = vol;
@@ -556,19 +604,29 @@ binary_sensor:
   - platform: status
     name: "Connection Status"
     id: wifi_status
+
+  - platform: gpio
+    pin:
+      number: GPIO8
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Charge Status"
+    id: charge_status
     on_state:
       then:
-        - if:
-            condition:
-              binary_sensor.is_on: wifi_status
-            then:
-              - lvgl.label.update:
-                  id: lbl_connection
-                  text: "API:OK"
-            else:
-              - lvgl.label.update:
-                  id: lbl_connection
-                  text: "API:OFF"
+        - lambda: |-
+            if (id(charge_status).state) {
+              // Charging — green "CHG"
+              lv_label_set_text(id(lbl_battery), "CHG");
+              lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0x00FF00), 0);
+            } else {
+              // On battery — amber "BAT"
+              lv_label_set_text(id(lbl_battery), "BAT");
+              lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0xFFA500), 0);
+            }
+            lv_obj_invalidate(id(lbl_battery));
 
 # =============================================================================
 # Intervals — Polling + Health Check
@@ -626,17 +684,24 @@ interval:
 
                       if (status == "processing") {
                         std::string stage = find_json_str("stage");
+                        std::string transcript = find_json_str("transcript");
                         // Update display with stage
                         if (stage == "transcribing") {
                           lv_label_set_text(id(lbl_action), "Transcribing...");
                         } else if (stage == "thinking") {
                           lv_label_set_text(id(lbl_action), "Thinking...");
+                          // Show what it heard
+                          if (!transcript.empty()) {
+                            lv_label_set_text(id(lbl_reply), transcript.c_str());
+                            lv_obj_invalidate(id(lbl_reply));
+                          }
                         } else if (stage == "speaking") {
                           lv_label_set_text(id(lbl_action), "Generating...");
                         }
                         lv_obj_invalidate(id(lbl_action));
 
                       } else if (status == "ready") {
+                        id(last_activity_ms) = millis();
                         std::string wav_url = find_json_str("wav_url");
                         std::string text = find_json_str("text");
                         float duration = find_json_num("duration");
@@ -728,6 +793,32 @@ interval:
                           lv_label_set_text(id(lbl_action), ("WiFi:" + wifi_ssid.substr(0, 10)).c_str());
                           lv_obj_invalidate(id(lbl_action));
                         }
+
+                        // Check for push notification
+                        std::string notify_wav = find_str("notify_wav_url");
+                        if (!notify_wav.empty()) {
+                          id(last_activity_ms) = millis();
+                          std::string notify_text = find_str("notify_text");
+                          ESP_LOGW("notify", "Push notification: %s", notify_text.c_str());
+                          // Show text on display
+                          if (!notify_text.empty()) {
+                            lv_label_set_text(id(lbl_reply), notify_text.c_str());
+                            lv_obj_invalidate(id(lbl_reply));
+                          }
+                          // Queue playback
+                          id(pending_wav_url) = notify_wav;
+                          // Parse duration from notify_duration
+                          auto find_num = [&](const std::string &key) -> float {
+                            std::string needle = "\"" + key + "\"";
+                            size_t pos = body.find(needle);
+                            if (pos == std::string::npos) return 3.0f;
+                            pos += needle.length();
+                            while (pos < body.size() && (body[pos] == ':' || body[pos] == ' ')) pos++;
+                            return atof(body.c_str() + pos);
+                          };
+                          id(play_duration_ms) = (int)(find_num("notify_duration") * 1000);
+                          id(voice_state) = 4;  // READY_TO_PLAY
+                        }
                       } else {
                         lv_label_set_text(id(lbl_bridge), "VPS:ERR");
                         lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF0000), 0);
@@ -738,6 +829,52 @@ interval:
                       lv_label_set_text(id(lbl_bridge), "VPS:DOWN");
                       lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF0000), 0);
                       lv_obj_invalidate(id(lbl_bridge));
+
+  # Amber LED pulse when on battery + idle
+  - interval: 5s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(voice_state) == 0 && !id(charge_status).state;'
+          then:
+            - light.turn_on:
+                id: status_led
+                brightness: 30%
+                red: 100%
+                green: 50%
+                blue: 0%
+                transition_length: 500ms
+            - delay: 1s
+            - light.turn_on:
+                id: status_led
+                brightness: 5%
+                red: 100%
+                green: 50%
+                blue: 0%
+                transition_length: 3s
+
+  # Auto-sleep after 5min idle on battery
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(voice_state) == 0
+                && !id(charge_status).state
+                && id(last_activity_ms) > 0
+                && (millis() - id(last_activity_ms)) > ${sleep_timeout_ms};
+          then:
+            - lvgl.label.update:
+                id: lbl_action
+                text: "Sleeping..."
+            - light.turn_on:
+                id: status_led
+                brightness: 15%
+                red: 50%
+                green: 0%
+                blue: 100%
+            - delay: 2s
+            - switch.turn_off: power_hold
 
 # --- Diagnostics ---
 sensor:
@@ -766,5 +903,13 @@ text_sensor:
           - lvgl.label.update:
               id: lbl_ip
               text: !lambda 'return "IP:" + x;'
+          - if:
+              condition:
+                lambda: 'return !id(boot_chime_played);'
+              then:
+                - lambda: |-
+                    id(boot_chime_played) = true;
+                - delay: 2s
+                - script.execute: play_boot_chime
     ssid:
       name: "Connected SSID"
