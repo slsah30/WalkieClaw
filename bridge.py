@@ -3,29 +3,21 @@
 AIPI Lite → OpenClaw VPS Voice Bridge
 ======================================
 
-This bridge script connects your AIPI Lite ESP32-S3 hardware to your
-OpenClaw AI agent running on your PC or VPS.
-
 Architecture:
   [AIPI Lite] --UDP audio--> [This Bridge] --HTTP--> [OpenClaw VPS]
-  [AIPI Lite] <--HTTP WAV--- [This Bridge] <--text-- [OpenClaw VPS]
+  [AIPI Lite] --HTTP poll--> [This Bridge] <--text-- [OpenClaw VPS]
+  [AIPI Lite] <--HTTP GET--- [This Bridge] (fetch WAV)
 
 The bridge handles:
   1. Receiving raw I2S audio via UDP from the ESP32
   2. Transcribing speech to text (faster-whisper, local)
   3. Sending the text to your OpenClaw agent's HTTP API
-  4. Converting the response to speech (gTTS or ElevenLabs)
-  5. Serving the WAV file over HTTP for the ESP32 to stream
-  6. Commanding the ESP32 via ESPHome native API to play it
+  4. Converting the response to speech (Edge TTS)
+  5. Storing result for HTTP polling by ESP32
+  6. Serving the WAV file over HTTP for the ESP32 to stream
 
 Dependencies:
-  pip install aioesphomeapi faster-whisper gtts pydub requests aiohttp
-
-Usage:
-  python3 bridge.py
-
-Configuration:
-  Edit the CONFIG section below, or use environment variables.
+  pip install aioesphomeapi faster-whisper gtts pydub requests aiohttp edge-tts
 """
 
 import asyncio
@@ -33,6 +25,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import struct
@@ -46,7 +39,7 @@ import aiohttp
 from aiohttp import web
 
 # =============================================================================
-# CONFIG — Edit these for your setup
+# CONFIG
 # =============================================================================
 
 CONFIG = {
@@ -56,52 +49,44 @@ CONFIG = {
     "HTTP_HOST": os.getenv("HTTP_HOST", "0.0.0.0"),
     "HTTP_PORT": int(os.getenv("HTTP_PORT", "8080")),
 
-    # --- ESPHome Device ---
-    # IP of your AIPI Lite on your local network
+    # --- ESPHome Device (best-effort, for display updates) ---
     "ESPHOME_HOST": os.getenv("ESPHOME_HOST", "192.168.1.50"),
     "ESPHOME_PORT": int(os.getenv("ESPHOME_PORT", "6053")),
     "ESPHOME_PASSWORD": os.getenv("ESPHOME_PASSWORD", ""),
     "ESPHOME_NOISE_PSK": os.getenv("ESPHOME_NOISE_PSK", ""),
 
     # --- OpenClaw VPS ---
-    # Base URL of your OpenClaw gateway (just the origin, no path)
     "OPENCLAW_URL": os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789"),
     "OPENCLAW_TOKEN": os.getenv("OPENCLAW_TOKEN", ""),
-    # "chat" = /v1/chat/completions (recommended for voice, synchronous)
-    # "hooks" = /hooks/agent (async webhook style)
     "OPENCLAW_MODE": os.getenv("OPENCLAW_MODE", "chat"),
-    # Which agent to route to (default "main")
     "OPENCLAW_AGENT_ID": os.getenv("OPENCLAW_AGENT_ID", "main"),
 
-    # --- STT (Speech-to-Text) ---
-    # Model: "tiny", "base", "small", "medium", "large-v3"
-    # Smaller = faster, larger = more accurate
+    # --- STT ---
     "WHISPER_MODEL": os.getenv("WHISPER_MODEL", "base"),
     "WHISPER_LANGUAGE": os.getenv("WHISPER_LANGUAGE", "en"),
-    "WHISPER_DEVICE": os.getenv("WHISPER_DEVICE", "cpu"),  # or "cuda"
+    "WHISPER_DEVICE": os.getenv("WHISPER_DEVICE", "cpu"),
 
-    # --- TTS (Text-to-Speech) ---
-    # "gtts" for Google TTS (free), "elevenlabs" for ElevenLabs
+    # --- TTS ---
     "TTS_ENGINE": os.getenv("TTS_ENGINE", "gtts"),
     "ELEVENLABS_API_KEY": os.getenv("ELEVENLABS_API_KEY", ""),
     "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", ""),
 
     # --- Audio ---
-    "SAMPLE_RATE": 16000,       # Input sample rate from ESP32
-    "OUTPUT_SAMPLE_RATE": 16000, # Output to ESP32 speaker
+    "SAMPLE_RATE": 16000,
+    "OUTPUT_SAMPLE_RATE": 16000,
     "CHANNELS": 1,
-    "SAMPLE_WIDTH": 2,          # 16-bit = 2 bytes
-    "VOLUME_REDUCTION_DB": 0,  # Reduce TTS volume to protect tiny speaker
+    "SAMPLE_WIDTH": 2,
+    "VOLUME_REDUCTION_DB": 0,
 
-    # --- Tailscale / Network ---
-    # When running on VPS behind Tailscale, set this to your VPS Tailscale IP
-    # so the ESP32 fetches WAV files from the right address.
-    # Leave empty for auto-detection (works for LAN-only setups).
+    # --- Network ---
     "HTTP_ADVERTISE_HOST": os.getenv("HTTP_ADVERTISE_HOST", ""),
 
     # --- Paths ---
     "AUDIO_DIR": os.getenv("AUDIO_DIR", "/tmp/aipi-bridge-audio"),
     "BEEP_FILE": os.getenv("BEEP_FILE", "beep.wav"),
+
+    # --- Security ---
+    "BRIDGE_API_KEY": os.getenv("BRIDGE_API_KEY", ""),
 }
 
 # =============================================================================
@@ -117,7 +102,6 @@ log = logging.getLogger("bridge")
 # Global State
 # =============================================================================
 class BridgeState:
-    """Tracks the current state of the voice bridge."""
     def __init__(self):
         self.is_listening = False
         self.is_processing = False
@@ -128,14 +112,57 @@ class BridgeState:
         self.esphome_client = None
         self.esphome_services = {}
         self.whisper_model = None
+        # --- Poll state (for HTTP polling by ESP32) ---
+        self.poll_status = "idle"        # "idle" | "processing" | "ready"
+        self.poll_stage = ""             # "transcribing" | "thinking" | "speaking"
+        self.poll_wav_url = ""
+        self.poll_text = ""
+        self.poll_transcript = ""
+        self.poll_wav_duration = 0.0
+        self.poll_ready_time = 0.0
+        # --- Pending commands for ESP32 (delivered via poll/health) ---
+        self.pending_wifi_ssid = ""
+        self.pending_wifi_password = ""
+        # --- Pending push notifications for ESP32 ---
+        self.pending_notifications: list = []  # list of {"text": str, "wav_url": str, "duration": float}
 
 state = BridgeState()
 
 # =============================================================================
-# STT — Speech to Text via faster-whisper
+# Security: API Key validation + Rate limiting
+# =============================================================================
+_rate_limit_store: dict = {}  # ip -> list of timestamps
+RATE_LIMIT_MAX = 30           # requests per window
+RATE_LIMIT_WINDOW = 60        # seconds
+
+def _check_api_key(request: web.Request) -> bool:
+    """Validate X-API-Key header against configured BRIDGE_API_KEY."""
+    expected = CONFIG.get("BRIDGE_API_KEY", "")
+    if not expected:
+        return True  # no key configured = open (backwards compat)
+    provided = request.headers.get("X-API-Key", "")
+    return provided == expected
+
+def _rate_limit_ok(ip: str) -> bool:
+    """Return True if the IP is within rate limits."""
+    now = time.time()
+    timestamps = _rate_limit_store.get(ip, [])
+    # Prune old entries
+    timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
+    if len(timestamps) >= RATE_LIMIT_MAX:
+        _rate_limit_store[ip] = timestamps
+        return False
+    timestamps.append(now)
+    _rate_limit_store[ip] = timestamps
+    return True
+
+# Track IPs that sent a valid keyed START in current session
+_authenticated_udp_ips: set = set()
+
+# =============================================================================
+# STT
 # =============================================================================
 def init_whisper():
-    """Load the Whisper model (done once at startup)."""
     from faster_whisper import WhisperModel
     log.info(f"Loading Whisper model: {CONFIG['WHISPER_MODEL']} "
              f"on {CONFIG['WHISPER_DEVICE']}...")
@@ -148,12 +175,10 @@ def init_whisper():
 
 
 def transcribe_audio(audio_bytes: bytes) -> str:
-    """Transcribe raw PCM audio bytes to text."""
     if not state.whisper_model:
         log.error("Whisper model not initialized!")
         return ""
 
-    # Wrap raw PCM in a WAV container for Whisper
     wav_buf = io.BytesIO()
     with wave.open(wav_buf, "wb") as wf:
         wf.setnchannels(CONFIG["CHANNELS"])
@@ -162,7 +187,6 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         wf.writeframes(audio_bytes)
     wav_buf.seek(0)
 
-    # Save to temp file (faster-whisper needs a file path)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp.write(wav_buf.read())
         tmp_path = tmp.name
@@ -188,21 +212,6 @@ def transcribe_audio(audio_bytes: bytes) -> str:
 # OpenClaw Agent Communication
 # =============================================================================
 async def send_to_openclaw(text: str) -> str:
-    """
-    Send transcribed text to your OpenClaw agent and get the response.
-
-    Supports two OpenClaw endpoint modes (set via OPENCLAW_MODE env var):
-
-    "hooks"  — POST /hooks/agent  (webhook style, async by default)
-               Gateway must have hooks.enabled=true in config.
-               Response comes back as the agent run result.
-
-    "chat"   — POST /v1/chat/completions  (OpenAI-compatible endpoint)
-               Gateway must have gateway.http.endpoints.chatCompletions.enabled=true.
-               Uses a stable session key so the agent remembers conversation context.
-               This is the RECOMMENDED mode for voice — it's synchronous and
-               returns the full response text directly.
-    """
     if not text.strip():
         return "I didn't catch that. Could you say it again?"
 
@@ -222,12 +231,61 @@ async def send_to_openclaw(text: str) -> str:
         return "Sorry, I encountered an error."
 
 
+def _extract_tts_from_session() -> str:
+    """Extract TTS text from the most recent OpenClaw session log.
+
+    When the agent uses a TTS tool call instead of plain text,
+    the chat completions endpoint returns 'No response from OpenClaw.'
+    This reads the session log to find the spoken text.
+    """
+    import glob
+    sessions_dir = Path.home() / ".openclaw" / "agents" / "main" / "sessions"
+    # Find the aipi-lite-voice session ID from sessions.json
+    sessions_index = sessions_dir / "sessions.json"
+    if not sessions_index.exists():
+        return ""
+    try:
+        with open(sessions_index) as f:
+            idx = json.load(f)
+        session_info = idx.get("agent:main:openai-user:aipi-lite-voice", {})
+        sid = session_info.get("sessionId", "")
+        if not sid:
+            return ""
+        session_file = sessions_dir / f"{sid}.jsonl"
+        if not session_file.exists():
+            return ""
+        # Read last 20 lines looking for TTS tool calls
+        lines = session_file.read_text().strip().split("\n")[-20:]
+        tts_texts = []
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+                msg = entry.get("message", {})
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for item in content:
+                        if item.get("type") == "toolCall" and item.get("name") == "tts":
+                            args = item.get("arguments", {})
+                            if isinstance(args, str):
+                                args = json.loads(args)
+                            txt = args.get("text", "")
+                            if txt:
+                                tts_texts.append(txt)
+                # Stop at first user message (don't go further back)
+                role = msg.get("role", "")
+                if role == "user":
+                    break
+            except (json.JSONDecodeError, KeyError):
+                continue
+        # Return combined TTS texts in order
+        tts_texts.reverse()
+        return " ".join(tts_texts) if tts_texts else ""
+    except Exception as e:
+        logging.getLogger("bridge").warning(f"TTS extraction failed: {e}")
+        return ""
+
+
 async def _openclaw_chat_completions(text: str) -> str:
-    """
-    Use OpenClaw's OpenAI-compatible /v1/chat/completions endpoint.
-    This gives synchronous responses and maintains conversation context
-    via the 'user' field as a stable session key.
-    """
     base_url = CONFIG["OPENCLAW_URL"].rstrip("/")
     url = f"{base_url}/v1/chat/completions"
 
@@ -236,13 +294,11 @@ async def _openclaw_chat_completions(text: str) -> str:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    # Agent ID: use OPENCLAW_AGENT_ID or default to "main"
     agent_id = CONFIG.get("OPENCLAW_AGENT_ID", "main")
     model = f"openclaw:{agent_id}"
 
     payload = {
         "model": model,
-        # 'user' field = stable session key for multi-turn conversation
         "user": "aipi-lite-voice",
         "stream": False,
         "messages": [
@@ -253,20 +309,25 @@ async def _openclaw_chat_completions(text: str) -> str:
     async with aiohttp.ClientSession() as session:
         async with session.post(
             url, json=payload, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=300),
         ) as resp:
             if resp.status == 200:
                 data = await resp.json()
-                # Standard OpenAI chat completions response format
                 choices = data.get("choices", [])
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
                 else:
                     content = str(data)
-                # Strip <think> tags (DeepSeek/R1 models)
                 content = re.sub(
                     r"<think>.*?</think>", "", content, flags=re.DOTALL
                 ).strip()
+                # If gateway returned "No response" it may have used TTS tool
+                # instead of text — extract spoken text from session log
+                if not content or content == "No response from OpenClaw.":
+                    tts_text = _extract_tts_from_session()
+                    if tts_text:
+                        content = tts_text
+                        log.info(f"Extracted TTS text: {content[:100]}...")
                 log.info(f"OpenClaw response: {content[:100]}...")
                 return content or "I processed that but had nothing to say."
             else:
@@ -276,14 +337,6 @@ async def _openclaw_chat_completions(text: str) -> str:
 
 
 async def _openclaw_hooks_agent(text: str) -> str:
-    """
-    Use OpenClaw's /hooks/agent webhook endpoint.
-    Returns 202 (async run started). The response text may come back
-    via the configured channel (WhatsApp, Telegram, etc.) rather than
-    in the HTTP response body. Best for fire-and-forget triggers.
-
-    For voice, prefer "chat" mode instead — it returns text synchronously.
-    """
     base_url = CONFIG["OPENCLAW_URL"].rstrip("/")
     url = f"{base_url}/hooks/agent"
 
@@ -303,7 +356,7 @@ async def _openclaw_hooks_agent(text: str) -> str:
     async with aiohttp.ClientSession() as session:
         async with session.post(
             url, json=payload, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=300),
         ) as resp:
             if resp.status in (200, 202):
                 data = await resp.json()
@@ -327,13 +380,11 @@ async def _openclaw_hooks_agent(text: str) -> str:
 
 
 # =============================================================================
-# TTS — Text to Speech
+# TTS
 # =============================================================================
 async def synthesize_speech(text: str) -> str:
-    """Convert text to a WAV file and return the file path."""
     os.makedirs(CONFIG["AUDIO_DIR"], exist_ok=True)
 
-    # Generate unique filename based on content hash + timestamp
     text_hash = hashlib.md5(text.encode()).hexdigest()[:8]
     timestamp = int(time.time() * 1000)
     wav_path = os.path.join(CONFIG["AUDIO_DIR"], f"tts_{text_hash}_{timestamp}.wav")
@@ -347,7 +398,6 @@ async def synthesize_speech(text: str) -> str:
     else:
         await _tts_gtts(text, wav_path)
 
-    # Post-process: resample to output rate and reduce volume
     wav_path = _postprocess_audio(wav_path)
 
     state.current_wav_path = wav_path
@@ -356,7 +406,6 @@ async def synthesize_speech(text: str) -> str:
 
 
 async def _tts_edge(text: str, output_path: str):
-    """Generate TTS using Microsoft Edge TTS (free, natural voices)."""
     import edge_tts
     from pydub import AudioSegment
 
@@ -365,7 +414,6 @@ async def _tts_edge(text: str, output_path: str):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(mp3_path)
 
-    # Convert MP3 to WAV
     loop = asyncio.get_event_loop()
     def _convert():
         audio = AudioSegment.from_mp3(mp3_path)
@@ -378,16 +426,13 @@ async def _tts_edge(text: str, output_path: str):
 
 
 async def _tts_gtts(text: str, output_path: str):
-    """Generate TTS using Google Text-to-Speech (free)."""
     from gtts import gTTS
 
     loop = asyncio.get_event_loop()
     def _generate():
         tts = gTTS(text=text, lang="en", slow=False)
-        # gTTS outputs MP3, we need to convert to WAV
         mp3_path = output_path.replace(".wav", ".mp3")
         tts.save(mp3_path)
-        # Convert MP3 to WAV using pydub
         from pydub import AudioSegment
         audio = AudioSegment.from_mp3(mp3_path)
         audio = audio.set_frame_rate(CONFIG["OUTPUT_SAMPLE_RATE"])
@@ -400,7 +445,6 @@ async def _tts_gtts(text: str, output_path: str):
 
 
 async def _tts_elevenlabs(text: str, output_path: str):
-    """Generate TTS using ElevenLabs API."""
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{CONFIG['ELEVENLABS_VOICE_ID']}"
     headers = {
         "xi-api-key": CONFIG["ELEVENLABS_API_KEY"],
@@ -422,28 +466,19 @@ async def _tts_elevenlabs(text: str, output_path: str):
                     f.write(await resp.read())
             else:
                 log.error(f"ElevenLabs error: {resp.status}")
-                # Fall back to gTTS
                 await _tts_gtts(text, output_path)
 
 
 def _postprocess_audio(wav_path: str) -> str:
-    """Resample, adjust volume, and add silence tail for hardware flush."""
     from pydub import AudioSegment
 
     audio = AudioSegment.from_wav(wav_path)
-
-    # Ensure correct output format
     audio = audio.set_frame_rate(CONFIG["OUTPUT_SAMPLE_RATE"])
     audio = audio.set_channels(1)
     audio = audio.set_sample_width(2)
-
-    # Reduce volume to protect the tiny speaker
     audio = audio + CONFIG["VOLUME_REDUCTION_DB"]
 
-    # Create a short beep prefix (wake indicator)
-    beep = AudioSegment.silent(duration=50, frame_rate=CONFIG["OUTPUT_SAMPLE_RATE"])
     # Generate a simple 800Hz tone beep
-    import math
     beep_samples = []
     for i in range(int(CONFIG["OUTPUT_SAMPLE_RATE"] * 0.08)):
         sample = int(4000 * math.sin(2 * math.pi * 800 * i / CONFIG["OUTPUT_SAMPLE_RATE"]))
@@ -454,28 +489,51 @@ def _postprocess_audio(wav_path: str) -> str:
         sample_width=2,
         frame_rate=CONFIG["OUTPUT_SAMPLE_RATE"],
         channels=1,
-    ) - 12  # Quiet beep
+    ) - 12
 
-    # Add 200ms silence tail — flushes ESP32 I2S DMA buffers cleanly
     silence_tail = AudioSegment.silent(
         duration=200,
         frame_rate=CONFIG["OUTPUT_SAMPLE_RATE"],
     )
 
-    # Stitch: beep + short pause + speech + silence tail
     final = beep + AudioSegment.silent(duration=100) + audio + silence_tail
-
-    # Overwrite the file
     final.export(wav_path, format="wav")
     return wav_path
+
+
+# =============================================================================
+# Helper: get WAV URL for a file path
+# =============================================================================
+def _wav_url(wav_path: str) -> str:
+    filename = os.path.basename(wav_path)
+    advertise_host = CONFIG.get("HTTP_ADVERTISE_HOST", "")
+    if advertise_host:
+        lan_ip = advertise_host
+    elif CONFIG["HTTP_HOST"] == "0.0.0.0":
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+        finally:
+            s.close()
+    else:
+        lan_ip = CONFIG["HTTP_HOST"]
+    return f"http://{lan_ip}:{CONFIG['HTTP_PORT']}/audio/{filename}?t={int(time.time() * 1000)}"
+
+
+def _wav_duration(wav_path: str) -> float:
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return 3.0
 
 
 # =============================================================================
 # UDP Audio Receiver
 # =============================================================================
 class UDPAudioProtocol(asyncio.DatagramProtocol):
-    """Receives raw I2S PCM audio from the AIPI Lite over UDP."""
-
     def __init__(self):
         self.transport = None
         self._silence_timer = None
@@ -486,10 +544,11 @@ class UDPAudioProtocol(asyncio.DatagramProtocol):
                  f"{CONFIG['UDP_LISTEN_HOST']}:{CONFIG['UDP_LISTEN_PORT']}")
 
     def datagram_received(self, data: bytes, addr):
-        if state.is_processing or state.is_speaking:
-            return  # Don't buffer while processing/speaking
+        # Block new audio while processing or while a ready response is pending
+        if state.is_processing or state.is_speaking or state.poll_status == "ready":
+            return
 
-        # Handle markers from ESP32 and relay
+        # Handle markers
         if data.startswith(b'ESP_IP:'):
             esp_ip = data.decode().split(':', 1)[1]
             if esp_ip != CONFIG.get('ESPHOME_HOST') or not state.esphome_client:
@@ -498,49 +557,70 @@ class UDPAudioProtocol(asyncio.DatagramProtocol):
                 if not state.esphome_client:
                     asyncio.ensure_future(init_esphome())
             return
-        if data in (b'START', b'STOP'):
-            log.debug(f'UDP marker: {data.decode()}')
+        # Handle keyed START marker: START:<first_8_chars_of_api_key>
+        if data.startswith(b'START'):
+            api_key = CONFIG.get("BRIDGE_API_KEY", "")
+            if api_key:
+                expected_prefix = f"START:{api_key[:8]}".encode()
+                if data == expected_prefix:
+                    _authenticated_udp_ips.add(addr[0])
+                    log.info(f"UDP authenticated START from {addr[0]}")
+                elif data == b'START':
+                    log.warning(f"UDP rejected unauthenticated START from {addr[0]}")
+                    return
+                else:
+                    log.warning(f"UDP rejected bad START key from {addr[0]}")
+                    return
+            else:
+                # No key configured, accept plain START
+                _authenticated_udp_ips.add(addr[0])
+                log.debug(f"UDP marker: START from {addr[0]} (no auth)")
+            return
+        if data == b'STOP':
+            log.debug(f'UDP marker: STOP from {addr[0]}')
+            return
+
+        # Drop PCM data from unauthenticated IPs
+        api_key = CONFIG.get("BRIDGE_API_KEY", "")
+        if api_key and addr[0] not in _authenticated_udp_ips:
             return
 
         state.is_listening = True
         state.audio_buffer.extend(data)
         state.last_activity = time.time()
 
-        # Cancel existing silence timer
         if self._silence_timer:
             self._silence_timer.cancel()
 
-        # After 1.5s of silence, process the buffered audio
         loop = asyncio.get_event_loop()
         self._silence_timer = loop.call_later(
             1.5, lambda: asyncio.ensure_future(self._process_buffer())
         )
 
     async def _process_buffer(self):
-        """Process accumulated audio buffer through the full pipeline."""
         if not state.audio_buffer or state.is_processing:
             return
 
         state.is_listening = False
         state.is_processing = True
+        state.poll_status = "processing"
+        state.poll_stage = "transcribing"
         audio_data = bytes(state.audio_buffer)
         state.audio_buffer.clear()
 
         # ESP32 I2S sends 32-bit samples; extract high 16-bit of each
-        # (every other int16 sample in little-endian is the actual audio)
         if len(audio_data) >= 4:
-            import struct as _struct
             n_samples_32 = len(audio_data) // 4
-            samples_32 = _struct.unpack(f"<{n_samples_32}i", audio_data[:n_samples_32*4])
+            samples_32 = struct.unpack(f"<{n_samples_32}i", audio_data[:n_samples_32*4])
             samples_16 = [((s >> 16) & 0xFFFF) for s in samples_32]
-            # Pack back as signed int16
-            audio_data = _struct.pack(f"<{len(samples_16)}h",
+            audio_data = struct.pack(f"<{len(samples_16)}h",
                 *[s if s < 32768 else s - 65536 for s in samples_16])
 
         log.info(f"Processing {len(audio_data)} bytes of audio...")
 
         try:
             # 1. Transcribe
+            state.poll_stage = "transcribing"
             await command_update_display("WalkieClaw", "Transcribing...")
             loop = asyncio.get_event_loop()
             text = await loop.run_in_executor(None, transcribe_audio, audio_data)
@@ -549,35 +629,49 @@ class UDPAudioProtocol(asyncio.DatagramProtocol):
                 log.info("No speech detected, skipping.")
                 await command_update_display("WalkieClaw", "Ready", "")
                 state.is_processing = False
+                state.poll_status = "idle"
+                state.poll_stage = ""
                 return
 
+            state.poll_transcript = text
+            state.poll_stage = "thinking"
             await command_update_display("WalkieClaw", "Thinking...", sanitize_for_display(f'"{text[:60]}"'))
 
             # 2. Send to OpenClaw
             response = await send_to_openclaw(text)
 
             # 3. Generate TTS
+            state.poll_stage = "speaking"
             wav_path = await synthesize_speech(response)
 
-            # 4. Update display with response text
+            # 4. Update display (best-effort via ESPHome API)
             await command_update_display("WalkieClaw", "Speaking...", sanitize_for_display(response[:200]))
 
-            # 5. Tell the ESP32 to play it
-            await command_play_tts(wav_path)
+            # 5. Store result for HTTP polling (instead of ESPHome push)
+            wav_url = _wav_url(wav_path)
+            duration = _wav_duration(wav_path)
+            state.poll_wav_url = wav_url
+            state.poll_text = sanitize_for_display(response[:200])
+            state.poll_wav_duration = duration
+            state.poll_status = "ready"
+            state.poll_ready_time = time.time()
+            log.info(f"Response ready for poll: {wav_url} ({duration:.1f}s)")
 
         except Exception as e:
             log.error(f"Pipeline error: {e}", exc_info=True)
+            state.poll_status = "idle"
+            state.poll_stage = ""
         finally:
             state.is_processing = False
             state.is_speaking = False
-            await command_update_display("WalkieClaw", "Ready")
 
 
 # =============================================================================
-# HTTP Server — Serves WAV files to the ESP32
+# HTTP Server
 # =============================================================================
 async def handle_audio_request(request: web.Request) -> web.Response:
-    """Serve WAV files for the ESP32 media_player to stream."""
+    # No API key check — media_player can't send custom headers.
+    # WAV filenames contain hash+timestamp so they're unguessable.
     filename = request.match_info.get("filename", "")
     filepath = os.path.join(CONFIG["AUDIO_DIR"], filename)
 
@@ -598,29 +692,149 @@ async def handle_audio_request(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """Health check endpoint."""
-    return web.json_response({
+    if not _check_api_key(request):
+        return web.Response(status=401, text="Unauthorized")
+    resp = {
         "status": "ok",
         "listening": state.is_listening,
         "processing": state.is_processing,
         "speaking": state.is_speaking,
+        "poll_status": state.poll_status,
         "uptime": time.time() - state.last_activity,
-    })
+    }
+    # Deliver pending WiFi command if any
+    if state.pending_wifi_ssid:
+        resp["wifi_ssid"] = state.pending_wifi_ssid
+        resp["wifi_password"] = state.pending_wifi_password
+        log.info(f"Delivering WiFi command via health: SSID={state.pending_wifi_ssid}")
+        state.pending_wifi_ssid = ""
+        state.pending_wifi_password = ""
+    # Deliver pending push notification if any
+    if state.pending_notifications and not state.is_processing and state.poll_status == "idle":
+        notif = state.pending_notifications.pop(0)
+        resp["notify_text"] = notif["text"]
+        resp["notify_wav_url"] = notif["wav_url"]
+        resp["notify_duration"] = notif["duration"]
+        log.info(f"Delivering push notification via health: {notif['text'][:60]}")
+    return web.json_response(resp)
+
+
+async def handle_poll_response(request: web.Request) -> web.Response:
+    """ESP32 polls this to check for processed responses."""
+    if not _check_api_key(request):
+        return web.Response(status=401, text="Unauthorized")
+    ip = request.remote or "unknown"
+    if not _rate_limit_ok(ip):
+        return web.Response(status=429, text="Too many requests")
+    if state.poll_status == "idle":
+        return web.json_response({"status": "idle"})
+    elif state.poll_status == "processing":
+        resp = {
+            "status": "processing",
+            "stage": state.poll_stage,
+        }
+        if state.poll_transcript:
+            resp["transcript"] = state.poll_transcript
+        return web.json_response(resp)
+    elif state.poll_status == "ready":
+        result = {
+            "status": "ready",
+            "wav_url": state.poll_wav_url,
+            "text": state.poll_text,
+            "transcript": state.poll_transcript,
+            "duration": round(state.poll_wav_duration, 1),
+        }
+        # Auto-acknowledge: transition back to idle
+        state.poll_status = "idle"
+        state.poll_stage = ""
+        state.poll_wav_url = ""
+        state.poll_text = ""
+        state.poll_transcript = ""
+        state.poll_wav_duration = 0.0
+        state.poll_ready_time = 0.0
+        log.info("Poll response served and acknowledged")
+        return web.json_response(result)
+    else:
+        return web.json_response({"status": "idle"})
+
+
+async def handle_notify(request: web.Request) -> web.Response:
+    """Queue a push notification for the ESP32 (TTS generated immediately)."""
+    if not _check_api_key(request):
+        return web.Response(status=401, text="Unauthorized")
+    try:
+        data = await request.json()
+        text = data.get("text", "").strip()
+        if not text:
+            return web.json_response({"error": "text is required"}, status=400)
+
+        # Sanitize for display
+        display_text = sanitize_for_display(text[:200])
+
+        # Generate TTS immediately
+        log.info(f"Generating push notification TTS: {text[:60]}...")
+        wav_path = await synthesize_speech(text)
+        wav_url = _wav_url(wav_path)
+        duration = _wav_duration(wav_path)
+
+        state.pending_notifications.append({
+            "text": display_text,
+            "wav_url": wav_url,
+            "duration": round(duration, 1),
+        })
+        log.info(f"Push notification queued ({len(state.pending_notifications)} pending)")
+
+        return web.json_response({
+            "status": "queued",
+            "text": display_text,
+            "pending": len(state.pending_notifications),
+            "message": "Notification queued. ESP32 will pick it up within 30s.",
+        })
+    except Exception as e:
+        log.error(f"notify error: {e}", exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_connect_wifi(request: web.Request) -> web.Response:
+    """Queue a WiFi command for the ESP32 to pick up on next health poll."""
+    if not _check_api_key(request):
+        return web.Response(status=401, text="Unauthorized")
+    try:
+        data = await request.json()
+        ssid = data.get("ssid", "").strip()
+        password = data.get("password", "").strip()
+
+        if not ssid:
+            return web.json_response({"error": "ssid is required"}, status=400)
+
+        state.pending_wifi_ssid = ssid
+        state.pending_wifi_password = password
+        log.info(f"Queued WiFi command: SSID={ssid} (will deliver on next ESP32 health poll)")
+
+        return web.json_response({
+            "status": "queued",
+            "ssid": ssid,
+            "message": f"WiFi command queued. ESP32 will pick it up within 30s.",
+        })
+    except Exception as e:
+        log.error(f"connect_wifi error: {e}")
+        return web.json_response({"error": str(e)}, status=500)
 
 
 def create_http_app() -> web.Application:
-    """Create the aiohttp web application."""
     app = web.Application()
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/api/response", handle_poll_response)
     app.router.add_get("/audio/{filename}", handle_audio_request)
+    app.router.add_post("/api/connect_wifi", handle_connect_wifi)
+    app.router.add_post("/api/notify", handle_notify)
     return app
 
 
 # =============================================================================
-# ESPHome Native API — Command the device
+# ESPHome Native API (best-effort for display updates)
 # =============================================================================
 async def init_esphome():
-    """Connect to the AIPI Lite via ESPHome native API."""
     try:
         from aioesphomeapi import APIClient
 
@@ -645,24 +859,23 @@ async def init_esphome():
 
 
 def sanitize_for_display(text: str) -> str:
-    """Replace non-ASCII chars that LVGL fonts can't render."""
     replacements = {
-        '\u2014': '-', '\u2013': '-',  # em/en dash
-        '\u2018': "'", '\u2019': "'",  # curly single quotes
-        '\u201c': '"', '\u201d': '"',  # curly double quotes
-        '\u2026': '...',              # ellipsis
-        '\u2022': '*',                # bullet
-        '\u00a0': ' ',                # non-breaking space
+        chr(0x2014): chr(45), chr(0x2013): chr(45),
+        chr(0x2018): chr(39), chr(0x2019): chr(39),
+        chr(0x201c): chr(34), chr(0x201d): chr(34),
+        chr(0x2026): "...",
+        chr(0x2022): "*",
+        chr(0x00a0): " ",
     }
     for old_char, new_char in replacements.items():
         text = text.replace(old_char, new_char)
-    # Strip any remaining non-ASCII
-    text = text.encode('ascii', 'replace').decode('ascii')
+    # Replace newlines/tabs with spaces, collapse multiple spaces
+    text = " ".join(text.split())
+    text = text.encode("ascii", "replace").decode("ascii")
     return text
 
 
 async def command_update_display(status: str, action: str, response: str = ""):
-    """Update the LVGL display labels on the ESP32."""
     try:
         if state.esphome_client:
             svc = state.esphome_services.get("update_display")
@@ -670,90 +883,24 @@ async def command_update_display(status: str, action: str, response: str = ""):
                 log.info(f"Display update: action={action!r}, response={response[:40]!r}")
                 await state.esphome_client.execute_service(svc, {"status_text": status, "action_text": action, "response_text": response})
             else:
-                log.warning("update_display service not found in esphome_services")
+                log.debug("update_display service not found in esphome_services")
         else:
-            log.warning("update_display skipped: no esphome_client")
+            log.debug("update_display skipped: no esphome_client")
     except Exception as e:
         log.warning(f"update_display failed: {e}")
         state.esphome_client = None
 
 
-async def command_play_tts(wav_path: str):
-    """Tell the ESP32 to play a WAV file from our HTTP server."""
-    filename = os.path.basename(wav_path)
-    # Use cache-busting timestamp parameter
-    url = (f"http://{CONFIG['HTTP_HOST']}:{CONFIG['HTTP_PORT']}"
-           f"/audio/{filename}?t={int(time.time() * 1000)}")
-
-    # If bridge runs on same machine, use the machine's LAN IP
-    # The ESP32 needs to reach this URL on the network
-    advertise_host = CONFIG.get("HTTP_ADVERTISE_HOST", "")
-    if advertise_host:
-        # Explicit override (e.g., Tailscale IP for VPS deployment)
-        lan_ip = advertise_host
-    elif CONFIG["HTTP_HOST"] == "0.0.0.0":
-        # Auto-detect LAN IP
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))
-            lan_ip = s.getsockname()[0]
-        finally:
-            s.close()
-    else:
-        lan_ip = CONFIG["HTTP_HOST"]
-
-    url = (f"http://{lan_ip}:{CONFIG['HTTP_PORT']}"
-           f"/audio/{filename}?t={int(time.time() * 1000)}")
-
-    log.info(f"Commanding ESP32 to play: {url}")
-    state.is_speaking = True
-
-    try:
-        if state.esphome_client:
-            # Call the play_tts service defined in the YAML
-            svc = state.esphome_services.get("play_tts")
-            if svc:
-                await state.esphome_client.execute_service(svc, {"url": url})
-        else:
-            # Fallback: try to reconnect
-            await init_esphome()
-            if state.esphome_client:
-                svc = state.esphome_services.get("play_tts")
-            if svc:
-                await state.esphome_client.execute_service(svc, {"url": url})
-    except Exception as e:
-        log.error(f"ESPHome command failed: {e}")
-        state.esphome_client = None
-
-    # Estimate playback duration and wait
-    try:
-        with wave.open(wav_path, "rb") as wf:
-            frames = wf.getnframes()
-            rate = wf.getframerate()
-            duration = frames / rate
-        await asyncio.sleep(duration + 0.5)
-    except Exception:
-        await asyncio.sleep(3)
-
-    state.is_speaking = False
-
-    # Skip restore_mic — it corrupts ES8311 DAC state
-    # Mic re-activates on next button press anyway
-    log.debug("Skipping restore_mic")
-
-
 # =============================================================================
-# Cleanup old audio files
+# Background Tasks
 # =============================================================================
 async def cleanup_audio_files():
-    """Periodically remove old WAV files to prevent disk bloat."""
     while True:
-        await asyncio.sleep(300)  # Every 5 minutes
+        await asyncio.sleep(300)
         audio_dir = CONFIG["AUDIO_DIR"]
         if not os.path.exists(audio_dir):
             continue
-        cutoff = time.time() - 600  # Files older than 10 minutes
+        cutoff = time.time() - 600
         for f in os.listdir(audio_dir):
             fpath = os.path.join(audio_dir, f)
             try:
@@ -763,16 +910,27 @@ async def cleanup_audio_files():
                 pass
 
 
-# =============================================================================
-# Main
-# =============================================================================
+async def stale_poll_cleanup():
+    """Reset poll state if a ready response sits uncollected for 60s."""
+    while True:
+        await asyncio.sleep(10)
+        if state.poll_status == "ready" and state.poll_ready_time > 0:
+            if time.time() - state.poll_ready_time > 60:
+                log.warning("Stale poll response (>60s), resetting to idle")
+                state.poll_status = "idle"
+                state.poll_stage = ""
+                state.poll_wav_url = ""
+                state.poll_text = ""
+                state.poll_transcript = ""
+                state.poll_wav_duration = 0.0
+                state.poll_ready_time = 0.0
+
+
 async def esphome_reconnect_loop():
-    """Periodically check ESPHome connection and reconnect if needed."""
     while True:
         await asyncio.sleep(10)
         try:
             if state.esphome_client:
-                # Test if still connected by getting device info
                 await state.esphome_client.device_info()
             else:
                 log.info("ESPHome not connected, attempting reconnect...")
@@ -787,51 +945,46 @@ async def esphome_reconnect_loop():
                 log.warning(f"Reconnect failed: {e}. Will retry in 10s.")
 
 
+# =============================================================================
+# Main
+# =============================================================================
 async def main():
-    """Start all bridge components."""
     log.info("=" * 60)
-    log.info("  AIPI Lite → OpenClaw VPS Voice Bridge")
+    log.info("  AIPI Lite -> OpenClaw VPS Voice Bridge (HTTP Poll)")
     log.info("=" * 60)
     log.info(f"  UDP listener:  {CONFIG['UDP_LISTEN_HOST']}:{CONFIG['UDP_LISTEN_PORT']}")
     log.info(f"  HTTP server:   {CONFIG['HTTP_HOST']}:{CONFIG['HTTP_PORT']}")
-    log.info(f"  ESPHome:       {CONFIG['ESPHOME_HOST']}:{CONFIG['ESPHOME_PORT']}")
     log.info(f"  OpenClaw:      {CONFIG['OPENCLAW_URL']}")
     log.info(f"  STT engine:    faster-whisper ({CONFIG['WHISPER_MODEL']})")
     log.info(f"  TTS engine:    {CONFIG['TTS_ENGINE']}")
+    log.info(f"  Poll endpoint: GET /api/response")
     log.info("=" * 60)
 
-    # Create audio directory
     os.makedirs(CONFIG["AUDIO_DIR"], exist_ok=True)
 
-    # Initialize Whisper
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, init_whisper)
 
-    # Connect to ESPHome device
+    # ESPHome connect (best-effort — voice pipeline works without it)
     await init_esphome()
 
-    # Start UDP listener
     transport, protocol = await loop.create_datagram_endpoint(
         UDPAudioProtocol,
         local_addr=(CONFIG["UDP_LISTEN_HOST"], CONFIG["UDP_LISTEN_PORT"]),
     )
 
-    # Start HTTP server
     app = create_http_app()
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, CONFIG["HTTP_HOST"], CONFIG["HTTP_PORT"])
     await site.start()
 
-    # Start cleanup task
     asyncio.create_task(cleanup_audio_files())
-
-    # Start ESPHome reconnect watcher
+    asyncio.create_task(stale_poll_cleanup())
     asyncio.create_task(esphome_reconnect_loop())
 
     log.info("Bridge is running! Press Ctrl+C to stop.")
 
-    # Keep running
     try:
         while True:
             await asyncio.sleep(3600)
