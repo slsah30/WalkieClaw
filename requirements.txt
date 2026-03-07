@@ -1,0 +1,5 @@
+aiohttp>=3.9
+faster-whisper>=1.0
+edge-tts>=6.1
+pydub>=0.25
+aioesphomeapi>=18.0

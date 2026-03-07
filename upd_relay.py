@@ -1,9 +1,10 @@
 import socket
+import os
 
 LOCAL_HOST = "0.0.0.0"
-LOCAL_PORT = 12345
-VPS_HOST = "100.79.21.120"
-VPS_PORT = 12345
+LOCAL_PORT = int(os.environ.get("RELAY_LOCAL_PORT", 12345))
+VPS_HOST = os.environ.get("RELAY_VPS_HOST", "<YOUR_VPS_TAILSCALE_IP>")
+VPS_PORT = int(os.environ.get("RELAY_VPS_PORT", 12345))
 
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

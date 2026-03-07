@@ -1,15 +1,19 @@
 # =============================================================================
-# AIPI Lite - WalkieClaw Voice Terminal (Direct-to-VPS via HTTP Polling)
+# WalkieClaw — Voice Terminal Firmware (Direct HTTP Polling)
 # =============================================================================
-# Clean rebuild — ESP32 sends UDP audio to VPS, polls HTTP for responses.
-# No WireGuard, no SNTP, no MSI relay. All connections ESP32-initiated.
+# ESP32 sends UDP audio to bridge, polls HTTP for responses.
+# All connections ESP32-initiated (outbound only). No tunnels needed.
 #
 # Architecture:
-#   ESP32 --UDP audio--> VPS:12345              (mic PCM + START/STOP markers)
-#   ESP32 --HTTP poll--> VPS:8080/api/response  (check for processed response)
-#   ESP32 <--HTTP GET--- VPS:8080/audio/*.wav   (fetch TTS audio to play)
+#   ESP32 --UDP audio--> bridge:12345              (mic PCM + START/STOP)
+#   ESP32 --HTTP poll--> bridge:8080/api/response  (check for AI response)
+#   ESP32 <--HTTP GET--- bridge:8080/audio/*.wav   (fetch TTS audio)
 #
-# Hardware: ESP32-S3-WROOM-1 (16MB flash, 8MB PSRAM octal)
+# bridge_host + API key: Configured at runtime via the built-in web UI.
+#   Flash once, connect to WalkieClaw-Fallback AP, enter WiFi creds,
+#   then visit http://<device_ip>/ to set bridge host and API key.
+#
+# Hardware: AIPI Lite (ESP32-S3-WROOM-1, 16MB flash, 8MB PSRAM octal)
 #           ES8311 audio codec (I2C ctrl + I2S data)
 #           128x128 TFT LCD (SPI, ST7735)
 #           WS2812 addressable LED, MEMS mic, 8ohm 0.8W speaker
@@ -27,7 +31,7 @@
 substitutions:
   device_name: "aipi-openclaw-direct"
   friendly_name: "WalkieClaw"
-  bridge_host: "76.13.126.201"
+  # bridge_host is now configured at runtime via the web UI (text entity cfg_bridge_host)
   bridge_udp_port: "12345"
   bridge_http_port: "8080"
   sleep_timeout_ms: "300000"
@@ -57,12 +61,26 @@ esphome:
           blue: 0%
       - delay: 1s
       - lambda: |-
-          udp_stream.setup("${bridge_host}", ${bridge_udp_port});
+          std::string host = id(cfg_bridge_host).state;
+          if (!host.empty()) {
+            udp_stream.setup(host.c_str(), ${bridge_udp_port});
+            ESP_LOGI("boot", "Bridge: %s", host.c_str());
+          } else {
+            ESP_LOGW("boot", "Bridge host not configured");
+          }
       - lambda: |-
           id(last_activity_ms) = millis();
-      - lvgl.label.update:
-          id: lbl_action
-          text: "Ready"
+      - if:
+          condition:
+            lambda: 'return id(cfg_bridge_host).state.empty();'
+          then:
+            - lvgl.label.update:
+                id: lbl_action
+                text: "Setup needed"
+          else:
+            - lvgl.label.update:
+                id: lbl_action
+                text: "Ready"
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -115,6 +133,11 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'false'
+
+font:
+  - file: "gfonts://Inter"
+    id: inter_12
+    size: 12
 
 logger:
   level: DEBUG
@@ -235,7 +258,7 @@ display:
     reset_pin: GPIO18
     dimensions: 128x128
     rotation: 90
-    invert_colors: true
+    invert_colors: false
     auto_clear_enabled: false
     update_interval: 1s
 
@@ -243,93 +266,111 @@ lvgl:
   displays:
     - lcd_display
   touchscreens: []
+  style_definitions:
+    - id: black_bg
+      bg_color: 0x000000
+      bg_opa: COVER
   pages:
     - id: main_page
+      styles: black_bg
       widgets:
-        # Row 1: Title centered (y=2)
+        # --- Row 1: Title (y=4) ---
         - label:
             id: lbl_status
             align: TOP_MID
-            y: 2
+            y: 8
             text: "WalkieClaw"
-            text_color: 0x00FF00
-            text_font: montserrat_14
-        # Row 2: IP + WiFi signal (y=18)
+            text_color: 0xFF69B4
+            text_font: inter_12
+
+        # --- Row 2: IP + WiFi bar (y=22) ---
+        - bar:
+            id: ip_bar_bg
+            align: TOP_MID
+            y: 22
+            width: 124
+            height: 14
+            min_value: 0
+            max_value: 100
+            value: 100
+            radius: 0
+            indicator:
+              bg_color: 0x763B06
+              border_width: 0
+              radius: 0
         - label:
             id: lbl_ip
             align: TOP_LEFT
-            x: 2
-            y: 18
-            text: "IP:..."
-            text_color: 0x00BFFF
+            x: 4
+            y: 24
+            text: "IP ..."
+            text_color: 0x88CCFF
             text_font: montserrat_10
         - label:
             id: lbl_wifi
             align: TOP_RIGHT
-            x: -2
-            y: 18
-            text: "W:?"
-            text_color: 0x808080
+            x: -4
+            y: 24
+            text: "WiFi ..."
+            text_color: 0x88CCFF
             text_font: montserrat_10
-        # Row 3: VPS status (y=29)
+
+        # --- Row 3: Bridge + Battery (y=40) ---
         - label:
             id: lbl_bridge
             align: TOP_LEFT
-            x: 2
-            y: 29
-            text: "VPS:..."
-            text_color: 0x505050
+            x: 4
+            y: 40
+            width: 95
+            text: "Bridge: ..."
+            text_color: 0xFFFFFF
             text_font: montserrat_10
+            long_mode: CLIP
         - label:
             id: lbl_battery
             align: TOP_RIGHT
-            x: -2
-            y: 29
-            text: "BAT"
+            x: -4
+            y: 40
+            text: "---"
             text_color: 0xFFA500
             text_font: montserrat_10
-        # Divider line (y=40)
-        - bar:
-            align: TOP_MID
-            y: 40
-            width: 124
-            height: 1
-            min_value: 0
-            max_value: 100
-            value: 100
-            indicator:
-              bg_color: 0x444444
-        # Action status — bigger font (y=44)
+
+        # --- Row 4: Action status (y=56) ---
         - label:
             id: lbl_action
-            align: TOP_MID
-            y: 44
+            align: TOP_LEFT
+            x: 4
+            y: 56
             text: "Booting"
-            text_color: 0x00FF00
+            text_color: 0x3FB950
             text_font: montserrat_14
-        # Response text — scrolling marquee (y=72)
+
+        # --- Row 5: Response text — scrolling (y=76) ---
         - label:
             id: lbl_reply
             align: TOP_LEFT
-            x: 2
-            y: 72
-            width: 124
+            x: 4
+            y: 76
+            width: 120
             height: 24
             long_mode: SCROLL_CIRCULAR
             anim_time: 10s
-            text: " "
-            text_color: 0xFFFF00
+            text: "..."
+            text_color: 0x888888
             text_font: montserrat_18
-        # VU meter at very bottom
+
+        # --- VU meter at bottom ---
         - bar:
             id: vu_meter
             align: BOTTOM_MID
-            y: -3
-            width: 120
-            height: 5
+            y: -4
+            width: 118
+            height: 4
             min_value: 0
             max_value: 100
             value: 0
+            indicator:
+              bg_color: 0x3388FF
 
 # --- Power Hold (GPIO10) — keeps device alive on battery ---
 switch:
@@ -508,6 +549,41 @@ script:
       - delay: 300ms
 
 # =============================================================================
+# Runtime Config — editable via web UI at http://<device_ip>/
+# =============================================================================
+text:
+  - platform: template
+    id: cfg_bridge_host
+    name: "Bridge Host"
+    restore_value: true
+    initial_value: ""
+    optimistic: true
+    min_length: 0
+    max_length: 64
+    mode: text
+    on_value:
+      then:
+        - lambda: |-
+            if (!x.empty() && id(wifi_status).state) {
+              udp_stream.setup(x.c_str(), ${bridge_udp_port});
+              ESP_LOGW("config", "Bridge host -> %s", x.c_str());
+              lv_label_set_text(id(lbl_action), "Ready");
+              lv_obj_invalidate(id(lbl_action));
+              lv_label_set_text(id(lbl_reply), " ");
+              lv_obj_invalidate(id(lbl_reply));
+            }
+
+  - platform: template
+    id: cfg_api_key
+    name: "Bridge API Key"
+    restore_value: true
+    initial_value: ""
+    optimistic: true
+    min_length: 0
+    max_length: 64
+    mode: text
+
+# =============================================================================
 # Buttons
 # =============================================================================
 binary_sensor:
@@ -523,6 +599,12 @@ binary_sensor:
     on_press:
       - lambda: |-
           id(last_activity_ms) = millis();
+          if (id(cfg_bridge_host).state.empty()) {
+            ESP_LOGW("btn", "Bridge not configured");
+            lv_label_set_text(id(lbl_action), "Set bridge IP");
+            lv_obj_invalidate(id(lbl_action));
+            return;
+          }
           if (id(voice_state) != 0) {
             ESP_LOGW("btn", "Ignoring press, voice_state=%d", id(voice_state));
             return;
@@ -542,8 +624,8 @@ binary_sensor:
                 id: lbl_action
                 text: "Listening..."
             - lambda: |-
-                // First 8 chars of bridge_api_key (from secrets.yaml)
-                udp_stream.send_keyed_start("0625fe12");
+                std::string key = id(cfg_api_key).state;
+                udp_stream.send_keyed_start(key.length() >= 8 ? key.substr(0, 8).c_str() : "00000000");
             - switch.turn_off: speaker_enable
             - delay: 100ms
             - microphone.capture:
@@ -616,17 +698,7 @@ binary_sensor:
     id: charge_status
     on_state:
       then:
-        - lambda: |-
-            if (id(charge_status).state) {
-              // Charging — green "CHG"
-              lv_label_set_text(id(lbl_battery), "CHG");
-              lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0x00FF00), 0);
-            } else {
-              // On battery — amber "BAT"
-              lv_label_set_text(id(lbl_battery), "BAT");
-              lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0xFFA500), 0);
-            }
-            lv_obj_invalidate(id(lbl_battery));
+        - component.update: battery_voltage
 
 # =============================================================================
 # Intervals — Polling + Health Check
@@ -637,15 +709,15 @@ interval:
     then:
       - if:
           condition:
-            lambda: 'return id(voice_state) == 2;'
+            lambda: 'return id(voice_state) == 2 && !id(cfg_bridge_host).state.empty();'
           then:
             - lambda: |-
                 id(poll_count) += 1;
                 ESP_LOGI("poll", "Polling VPS... attempt %d", id(poll_count));
             - http_request.get:
-                url: "http://${bridge_host}:${bridge_http_port}/api/response"
+                url: !lambda 'return "http://" + id(cfg_bridge_host).state + ":${bridge_http_port}/api/response";'
                 request_headers:
-                  X-API-Key: !secret bridge_api_key
+                  X-API-Key: !lambda 'return id(cfg_api_key).state.c_str();'
                 capture_response: true
                 on_response:
                   - lambda: |-
@@ -693,6 +765,7 @@ interval:
                           // Show what it heard
                           if (!transcript.empty()) {
                             lv_label_set_text(id(lbl_reply), transcript.c_str());
+                            lv_obj_set_style_text_color(id(lbl_reply), lv_color_hex(0xFFCC44), 0);
                             lv_obj_invalidate(id(lbl_reply));
                           }
                         } else if (stage == "speaking") {
@@ -714,6 +787,7 @@ interval:
                         // Show response text on display
                         if (!text.empty()) {
                           lv_label_set_text(id(lbl_reply), text.c_str());
+                          lv_obj_set_style_text_color(id(lbl_reply), lv_color_hex(0xFFCC44), 0);
                           lv_obj_invalidate(id(lbl_reply));
                         }
 
@@ -754,23 +828,25 @@ interval:
           then:
             - script.execute: play_response
 
-  # Health check — ping VPS every 30s when idle
+  # Health check — ping VPS every 30s when idle (skip if unconfigured)
   - interval: 30s
     then:
       - if:
           condition:
-            lambda: 'return id(voice_state) == 0;'
+            lambda: 'return id(voice_state) == 0 && !id(cfg_bridge_host).state.empty();'
           then:
             - http_request.get:
-                url: "http://${bridge_host}:${bridge_http_port}/health"
+                url: !lambda 'return "http://" + id(cfg_bridge_host).state + ":${bridge_http_port}/health";'
                 request_headers:
-                  X-API-Key: !secret bridge_api_key
+                  X-API-Key: !lambda 'return id(cfg_api_key).state.c_str();'
                 capture_response: true
                 on_response:
                   - lambda: |-
                       if (response->status_code == 200) {
-                        lv_label_set_text(id(lbl_bridge), "VPS:OK");
-                        lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0x00FF00), 0);
+                        std::string bhost = id(cfg_bridge_host).state;
+                        std::string blbl = "Bridge: " + (bhost.empty() ? "?" : bhost);
+                        lv_label_set_text(id(lbl_bridge), blbl.c_str());
+                        lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xE6EDF3), 0);
 
                         // Check for pending WiFi command in health response
                         auto find_str = [&](const std::string &key) -> std::string {
@@ -820,14 +896,14 @@ interval:
                           id(voice_state) = 4;  // READY_TO_PLAY
                         }
                       } else {
-                        lv_label_set_text(id(lbl_bridge), "VPS:ERR");
-                        lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF0000), 0);
+                        lv_label_set_text(id(lbl_bridge), "Bridge: err");
+                        lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF4444), 0);
                       }
                       lv_obj_invalidate(id(lbl_bridge));
                 on_error:
                   - lambda: |-
-                      lv_label_set_text(id(lbl_bridge), "VPS:DOWN");
-                      lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF0000), 0);
+                      lv_label_set_text(id(lbl_bridge), "Bridge: down");
+                      lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF4444), 0);
                       lv_obj_invalidate(id(lbl_bridge));
 
   # Amber LED pulse when on battery + idle
@@ -852,6 +928,25 @@ interval:
                 green: 50%
                 blue: 0%
                 transition_length: 3s
+
+  # Fallback AP instructions — only before first WiFi connect (not on brief dropouts)
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(wifi_status).state && !id(boot_chime_played);'
+          then:
+            - lambda: |-
+                lv_label_set_text(id(lbl_status), "WalkieClaw Setup");
+                lv_obj_set_style_text_color(id(lbl_status), lv_color_hex(0xFF69B4), 0);
+                lv_label_set_text(id(lbl_action), "Join WiFi AP");
+                lv_label_set_text(id(lbl_reply), "Connect to WalkieClaw-Fallback, pass:12345678, go to 192.168.4.1");
+                lv_label_set_text(id(lbl_bridge), "Bridge: no wifi");
+                lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFF4444), 0);
+                lv_obj_invalidate(id(lbl_status));
+                lv_obj_invalidate(id(lbl_action));
+                lv_obj_invalidate(id(lbl_reply));
+                lv_obj_invalidate(id(lbl_bridge));
 
   # Auto-sleep after 5min idle on battery
   - interval: 30s
@@ -887,11 +982,48 @@ sensor:
         - lvgl.label.update:
             id: lbl_wifi
             text: !lambda |-
-              if (x > -60) return "W:***";
-              if (x > -75) return "W:**-";
-              return "W:*--";
+              if (x > -60) return "WiFi:|||";
+              if (x > -75) return "WiFi:||.";
+              return "WiFi:|..";
   - platform: uptime
     name: "Uptime"
+
+  - platform: adc
+    pin: GPIO2
+    id: battery_voltage
+    name: "Battery Voltage"
+    update_interval: 30s
+    attenuation: 12db
+    samples: 10
+    filters:
+      - multiply: 2.0
+    on_value:
+      then:
+        - lambda: |-
+            // LiPo: 4.2V=100%, 3.7V=50%, 3.3V=10%, 3.0V=0%
+            float v = x;
+            int pct;
+            if (v >= 4.2f) pct = 100;
+            else if (v <= 3.0f) pct = 0;
+            else pct = (int)((v - 3.0f) / 1.2f * 100.0f);
+
+            char buf[8];
+            if (id(charge_status).state) {
+              snprintf(buf, sizeof(buf), "%d%%+", pct);
+              lv_label_set_text(id(lbl_battery), buf);
+              lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0x00FF00), 0);
+            } else {
+              snprintf(buf, sizeof(buf), "%d%%", pct);
+              lv_label_set_text(id(lbl_battery), buf);
+              if (pct > 20) {
+                lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0x00FF00), 0);
+              } else if (pct > 10) {
+                lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0xFFCC00), 0);
+              } else {
+                lv_obj_set_style_text_color(id(lbl_battery), lv_color_hex(0xFF0000), 0);
+              }
+            }
+            lv_obj_invalidate(id(lbl_battery));
 
 text_sensor:
   - platform: wifi_info
@@ -902,7 +1034,36 @@ text_sensor:
         then:
           - lvgl.label.update:
               id: lbl_ip
-              text: !lambda 'return "IP:" + x;'
+              text: !lambda 'return "IP " + x;'
+          - lambda: |-
+              // Restore normal display after fallback AP setup
+              lv_label_set_text(id(lbl_status), "WalkieClaw");
+              lv_obj_set_style_text_color(id(lbl_status), lv_color_hex(0xFF69B4), 0);
+              lv_obj_invalidate(id(lbl_status));
+              {
+                std::string bhost = id(cfg_bridge_host).state;
+                std::string blbl = "Bridge: " + (bhost.empty() ? "..." : bhost);
+                lv_label_set_text(id(lbl_bridge), blbl.c_str());
+                lv_obj_set_style_text_color(id(lbl_bridge), lv_color_hex(0xFFFFFF), 0);
+                lv_obj_invalidate(id(lbl_bridge));
+              }
+          - if:
+              condition:
+                lambda: 'return !id(cfg_bridge_host).state.empty();'
+              then:
+                - lambda: |-
+                    lv_label_set_text(id(lbl_action), "Ready");
+                    lv_obj_invalidate(id(lbl_action));
+                    lv_label_set_text(id(lbl_reply), " ");
+                    lv_obj_invalidate(id(lbl_reply));
+          - if:
+              condition:
+                lambda: 'return id(cfg_bridge_host).state.empty();'
+              then:
+                - lambda: |-
+                    std::string msg = "http://" + x + "/";
+                    lv_label_set_text(id(lbl_reply), msg.c_str());
+                    lv_obj_invalidate(id(lbl_reply));
           - if:
               condition:
                 lambda: 'return !id(boot_chime_played);'

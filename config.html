@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WalkieClaw Setup</title>
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950; --orange: #d29922; --red: #f85149; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; padding: 20px; max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.6em; margin-bottom: 4px; }
+  h1 span { color: var(--green); }
+  .subtitle { color: var(--dim); margin-bottom: 24px; font-size: 0.9em; }
+  h2 { font-size: 1.1em; margin: 24px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h2 .num { background: var(--accent); color: var(--bg); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.75em; margin-right: 6px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-size: 0.85em; color: var(--dim); margin-bottom: 4px; margin-top: 12px; }
+  label:first-child { margin-top: 0; }
+  input, select { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.9em; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input::placeholder { color: #484f58; }
+  .hint { font-size: 0.78em; color: #484f58; margin-top: 2px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  .mode-toggle { display: flex; gap: 0; margin-bottom: 16px; }
+  .mode-toggle button { flex: 1; padding: 10px; border: 1px solid var(--border); background: var(--card); color: var(--dim); cursor: pointer; font-size: 0.9em; transition: all 0.15s; }
+  .mode-toggle button:first-child { border-radius: 8px 0 0 8px; }
+  .mode-toggle button:last-child { border-radius: 0 8px 8px 0; }
+  .mode-toggle button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  .gen-btn { display: block; width: 100%; padding: 12px; margin-top: 20px; background: var(--green); color: var(--bg); border: none; border-radius: 8px; font-size: 1em; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  .gen-btn:hover { opacity: 0.85; }
+  .output { margin-top: 24px; display: none; }
+  .output.show { display: block; }
+  .file-block { margin-bottom: 16px; }
+  .file-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .file-header code { font-size: 0.95em; color: var(--accent); }
+  .copy-btn { padding: 4px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; color: var(--dim); cursor: pointer; font-size: 0.8em; transition: all 0.15s; }
+  .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--green); border-color: var(--green); }
+  pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-x: auto; font-size: 0.82em; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
+  .warn { background: #2d1b00; border-color: var(--orange); padding: 10px 14px; border-radius: 6px; margin-top: 16px; font-size: 0.85em; }
+  .warn b { color: var(--orange); }
+  .yaml-step { margin-top: 12px; padding: 10px 14px; background: #0d1b2a; border: 1px solid #1a3a5c; border-radius: 6px; font-size: 0.85em; }
+  .yaml-step code { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>&#x1f4e1; <span>WalkieClaw</span> Setup</h1>
+<p class="subtitle">Generate your config files. Open this page locally — nothing is sent anywhere.</p>
+
+<!-- Step 1: Mode -->
+<h2><span class="num">1</span> Deployment Mode</h2>
+<div class="mode-toggle">
+  <button id="mode-local" class="active" onclick="setMode('local')">Local (PC on LAN)</button>
+  <button id="mode-vps" onclick="setMode('vps')">VPS (Remote Server)</button>
+</div>
+
+<!-- Step 2: Bridge config -->
+<h2><span class="num">2</span> Bridge Config <code id="env-filename">local.env</code></h2>
+<div class="card">
+  <label for="bridge_ip" id="bridge_ip_label">Your PC's LAN IP</label>
+  <input id="bridge_ip" placeholder="e.g. 192.168.1.100">
+  <p class="hint" id="bridge_ip_hint">Run <code>ipconfig</code> (Windows) or <code>ip addr</code> (Linux) to find it</p>
+
+  <div class="row">
+    <div>
+      <label for="openclaw_token">OpenClaw Token</label>
+      <input id="openclaw_token" placeholder="your OpenClaw API token">
+    </div>
+    <div>
+      <label for="bridge_api_key">Bridge API Key</label>
+      <input id="bridge_api_key" placeholder="auto-generated if empty">
+      <p class="hint">Shared secret between ESP32 &amp; bridge</p>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label for="whisper_model">Whisper Model</label>
+      <select id="whisper_model">
+        <option value="tiny">tiny (fastest, least accurate)</option>
+        <option value="base">base (fast)</option>
+        <option value="small" selected>small (recommended)</option>
+        <option value="medium">medium (slower, more accurate)</option>
+        <option value="large-v3">large-v3 (slowest, best)</option>
+      </select>
+    </div>
+    <div>
+      <label for="tts_voice">TTS Voice</label>
+      <select id="tts_voice">
+        <option value="en-GB-RyanNeural" selected>en-GB-RyanNeural (British male)</option>
+        <option value="en-US-GuyNeural">en-US-GuyNeural (American male)</option>
+        <option value="en-US-JennyNeural">en-US-JennyNeural (American female)</option>
+        <option value="en-GB-SoniaNeural">en-GB-SoniaNeural (British female)</option>
+        <option value="en-AU-WilliamNeural">en-AU-WilliamNeural (Australian male)</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<!-- Step 3: ESP32 secrets -->
+<h2><span class="num">3</span> ESP32 Secrets <code>secrets.yaml</code></h2>
+<div class="card">
+  <div class="row">
+    <div>
+      <label for="wifi_ssid">WiFi SSID</label>
+      <input id="wifi_ssid" placeholder="Your home WiFi name">
+    </div>
+    <div>
+      <label for="wifi_password">WiFi Password</label>
+      <input id="wifi_password" type="password" placeholder="WiFi password">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label for="hotspot_ssid">Hotspot SSID (optional)</label>
+      <input id="hotspot_ssid" placeholder="Phone hotspot name">
+    </div>
+    <div>
+      <label for="hotspot_password">Hotspot Password (optional)</label>
+      <input id="hotspot_password" type="password" placeholder="Hotspot password">
+    </div>
+  </div>
+  <label for="ota_password">OTA Password</label>
+  <input id="ota_password" placeholder="auto-generated if empty">
+</div>
+
+<button class="gen-btn" onclick="generate()">Generate Config Files</button>
+
+<!-- Output -->
+<div class="output" id="output">
+  <h2><span class="num">&#x2713;</span> Your Config Files</h2>
+
+  <div class="file-block">
+    <div class="file-header">
+      <code id="out-env-name">.env</code>
+      <button class="copy-btn" onclick="copyBlock('out-env', this)">Copy</button>
+    </div>
+    <pre id="out-env"></pre>
+  </div>
+
+  <div class="file-block">
+    <div class="file-header">
+      <code>secrets.yaml</code>
+      <button class="copy-btn" onclick="copyBlock('out-secrets', this)">Copy</button>
+    </div>
+    <pre id="out-secrets"></pre>
+  </div>
+
+  <div class="yaml-step">
+    After flashing, connect to the <code>WalkieClaw-Fallback</code> AP and enter your WiFi credentials.<br>
+    Once on WiFi, visit <code>http://&lt;device_ip&gt;/</code> and set:<br>
+    &bull; <b>Bridge Host</b> &rarr; <code id="out-bridge-ip">...</code><br>
+    &bull; <b>Bridge API Key</b> &rarr; <code id="out-key-prefix">...</code> (full key)<br>
+    These settings persist across reboots &mdash; no YAML edits needed.
+  </div>
+
+  <div class="warn">
+    <b>&#x26a0; Keep secrets.yaml and .env out of version control.</b> Both are already in .gitignore.
+  </div>
+</div>
+
+<script>
+let mode = 'local';
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('mode-local').classList.toggle('active', m === 'local');
+  document.getElementById('mode-vps').classList.toggle('active', m === 'vps');
+  document.getElementById('env-filename').textContent = m === 'local' ? 'local.env' : 'vps.env';
+  if (m === 'local') {
+    document.getElementById('bridge_ip_label').textContent = "Your PC's LAN IP";
+    document.getElementById('bridge_ip_hint').innerHTML = 'Run <code>ipconfig</code> (Windows) or <code>ip addr</code> (Linux) to find it';
+  } else {
+    document.getElementById('bridge_ip_label').textContent = "Your VPS Public IP";
+    document.getElementById('bridge_ip_hint').textContent = 'The public IP of your server';
+  }
+}
+
+function randomHex(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function randomBase64(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  let bin = '';
+  a.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+
+function generate() {
+  const ip = document.getElementById('bridge_ip').value.trim();
+  const token = document.getElementById('openclaw_token').value.trim();
+  let apiKey = document.getElementById('bridge_api_key').value.trim();
+  const whisper = document.getElementById('whisper_model').value;
+  const voice = document.getElementById('tts_voice').value;
+  const ssid = document.getElementById('wifi_ssid').value.trim();
+  const wifiPass = document.getElementById('wifi_password').value;
+  const hotSsid = document.getElementById('hotspot_ssid').value.trim();
+  const hotPass = document.getElementById('hotspot_password').value;
+  let otaPass = document.getElementById('ota_password').value.trim();
+
+  if (!apiKey) apiKey = randomHex(16);
+  if (!otaPass) otaPass = 'walkieclaw-ota-' + randomHex(4);
+  const encKey = randomBase64(32);
+  const audioDir = mode === 'local' ? './audio' : '/tmp/aipi-bridge-audio';
+
+  // .env
+  const env = [
+    '# ' + (mode === 'local' ? 'WalkieClaw Bridge — LOCAL MODE' : 'WalkieClaw Bridge — VPS MODE'),
+    '',
+    'UDP_HOST=0.0.0.0',
+    'UDP_PORT=12345',
+    'HTTP_HOST=0.0.0.0',
+    'HTTP_PORT=8080',
+    'HTTP_ADVERTISE_HOST=' + (ip || '<SET_YOUR_IP>'),
+    '',
+    'ESPHOME_HOST=',
+    'ESPHOME_PORT=6053',
+    'ESPHOME_PASSWORD=',
+    'ESPHOME_NOISE_PSK=',
+    '',
+    'OPENCLAW_URL=http://127.0.0.1:18789',
+    'OPENCLAW_TOKEN=' + (token || '<SET_YOUR_TOKEN>'),
+    'OPENCLAW_MODE=chat',
+    '',
+    'WHISPER_MODEL=' + whisper,
+    'WHISPER_LANGUAGE=en',
+    'WHISPER_DEVICE=cpu',
+    '',
+    'TTS_ENGINE=edge',
+    'EDGE_TTS_VOICE=' + voice,
+    'ELEVENLABS_API_KEY=',
+    'ELEVENLABS_VOICE_ID=',
+    '',
+    'BRIDGE_API_KEY=' + apiKey,
+    '',
+    'AUDIO_DIR=' + audioDir,
+  ].join('\n');
+
+  // secrets.yaml
+  const secrets = [
+    '# WalkieClaw — ESPHome secrets',
+    '# NEVER commit this file!',
+    '',
+    'wifi_ssid: "' + (ssid || 'YOUR_WIFI_SSID') + '"',
+    'wifi_password: "' + (wifiPass || 'YOUR_WIFI_PASSWORD') + '"',
+    '',
+    'hotspot_ssid: "' + (hotSsid || 'YOUR_HOTSPOT_SSID') + '"',
+    'hotspot_password: "' + (hotPass || 'YOUR_HOTSPOT_PASSWORD') + '"',
+    '',
+    'fallback_password: "walkieclaw-fallback"',
+    'api_encryption_key: "' + encKey + '"',
+    'ota_password: "' + otaPass + '"',
+    '',
+    '# Bridge API key is configured at runtime via the ESP32 web UI.',
+    '# Set it at http://<device_ip>/ after flashing.',
+  ].join('\n');
+
+  document.getElementById('out-env').textContent = env;
+  document.getElementById('out-secrets').textContent = secrets;
+  document.getElementById('out-env-name').textContent = '.env';
+  document.getElementById('out-bridge-ip').textContent = ip || '<YOUR_IP>';
+  document.getElementById('out-key-prefix').textContent = apiKey;
+  document.getElementById('output').classList.add('show');
+  document.getElementById('output').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyBlock(id, btn) {
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+</script>
+</body>
+</html>

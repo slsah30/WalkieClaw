@@ -6,7 +6,15 @@
 /production.env
 .env
 
-# Firmware backup (16MB binary)
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Bridge audio output
+/audio/
+
+# Firmware backups
 *.bin
 
 # Old file backups
