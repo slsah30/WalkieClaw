@@ -202,6 +202,7 @@ So you don't have to:
 
 This project wouldn't exist without these amazing open-source tools and hardware:
 
+- **[Robert Lipe](https://www.robertlipe.com/449-2/)** — reverse engineered the AIPI Lite hardware, mapped the GPIO pinout, identified the ES8311 codec and display controller, and documented everything so the rest of us could build on it. This project literally starts with his work.
 - **[AIPI Lite](https://github.com/xorigin-ai)** by xorigin AI — the ESP32-S3 dev board with built-in mic, speaker, LCD, and LED. A fantastic little board for voice projects.
 - **[ESPHome](https://esphome.io/)** — the firmware framework that makes ESP32 development actually enjoyable.
 - **[LVGL](https://lvgl.io/)** — the graphics library powering the 128x128 display UI.
