@@ -199,7 +199,7 @@ async def send_to_openclaw(text: str) -> str:
 
     "chat"   — POST /v1/chat/completions  (OpenAI-compatible endpoint)
                Gateway must have gateway.http.endpoints.chatCompletions.enabled=true.
-               Uses a stable session key so Blam remembers conversation context.
+               Uses a stable session key so the agent remembers conversation context.
                This is the RECOMMENDED mode for voice — it's synchronous and
                returns the full response text directly.
     """
