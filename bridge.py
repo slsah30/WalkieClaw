@@ -4,7 +4,7 @@ AIPI Lite → OpenClaw VPS Voice Bridge
 ======================================
 
 This bridge script connects your AIPI Lite ESP32-S3 hardware to your
-OpenClaw (Blam) agent running on your VPS.
+OpenClaw AI agent running on your PC or VPS.
 
 Architecture:
   [AIPI Lite] --UDP audio--> [This Bridge] --HTTP--> [OpenClaw VPS]
