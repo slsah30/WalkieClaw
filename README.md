@@ -59,7 +59,7 @@ The AIPI Lite board was designed by [xorigin AI](https://github.com/xorigin-ai) 
 The bridge is a Python script that does the heavy lifting — speech recognition, AI chat, and text-to-speech. It runs on any machine with Python 3.10+.
 
 ```bash
-git clone https://github.com/slsah30/aipi-openclaw.git
+git clone https://github.com/slsah30/WalkieClaw.git
 cd aipi-openclaw
 
 # Create a virtual environment
