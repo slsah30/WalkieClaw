@@ -24,7 +24,7 @@ pip install faster-whisper
 If you have an NVIDIA GPU, this gives you sub-second speech-to-text. Requires [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) installed first. Without it, the bridge falls back to CPU-based whisper (slower but still works).
 
 ### 3. OpenClaw
-The AI agent framework that provides the brains. OpenClaw is an open-source AI agent framework — a self-hosted AI assistant you fully control.
+The AI agent framework that provides the brains. OpenClaw is an open-source AI agent framework - a self-hosted AI assistant you fully control.
 
 ```bash
 npm install -g openclaw
@@ -110,7 +110,7 @@ Options:
 3. **faster-whisper** on GPU transcribes the audio to text (~0.5 seconds)
 4. **OpenClaw** processes the text through your AI agent via `/v1/chat/completions` (~2-3 seconds)
 5. **Edge TTS** converts the response to speech, decoded in-process via WASM (~0.5 seconds)
-6. **HTTP polling** — the ESP32 picks up the audio URL and plays it through the speaker
+6. **HTTP polling** - the ESP32 picks up the audio URL and plays it through the speaker
 
 No subprocesses are spawned per request. No ffmpeg needed. No visible windows.
 

@@ -2,7 +2,7 @@
 
 **A tiny AI walkie-talkie you can build yourself.**
 
-Push a button. Talk. Get a spoken AI response from the little speaker. That's it. No app, no cloud subscription, no Alexa — just a $15 dev board and your own [OpenClaw](https://github.com/openclaw) AI agent.
+Push a button. Talk. Get a spoken AI response from the little speaker. That's it. No app, no cloud subscription, no Alexa - just a $15 dev board and your own [OpenClaw](https://github.com/openclaw) AI agent.
 
 Works on home WiFi or your phone's hotspot. Take it anywhere.
 
@@ -15,12 +15,12 @@ You press the button and say:     "Hey, what's the weather like today?"
 
 The display shows:                 Listening... → Processing... → Speaking...
 
-The speaker says:                  "It's sunny and 72 degrees — perfect day to be outside!"
+The speaker says:                  "It's sunny and 72 degrees - perfect day to be outside!"
 
 The LED changes color:             Red → Blue → Orange → Green (ready again)
 ```
 
-You can interrupt at any time — press the button while it's talking to cut it off and ask something new.
+You can interrupt at any time - press the button while it's talking to cut it off and ask something new.
 
 ## How It Works
 
@@ -45,24 +45,24 @@ You need an **ESP32-S3 board** with a mic and speaker. We recommend the **AIPI L
 
 | Component | Details |
 |-----------|---------|
-| Board | AIPI Lite — ESP32-S3-WROOM-1, 16MB flash, 8MB PSRAM |
+| Board | AIPI Lite - ESP32-S3-WROOM-1, 16MB flash, 8MB PSRAM |
 | Audio | ES8311 codec, MEMS mic, 8-ohm 0.8W speaker |
 | Display | 128x128 TFT LCD (ST7735, SPI) |
 | LED | WS2812 addressable RGB |
 | Buttons | Right (GPIO42) = Talk, Left (GPIO1) = Volume |
 | Power | USB-C or LiPo battery (GPIO10 power latch) |
 
-The AIPI Lite board was designed by [xorigin AI](https://github.com/xorigin-ai) — thanks for making such a fun little piece of hardware!
+The AIPI Lite board was designed by [xorigin AI](https://github.com/xorigin-ai) - thanks for making such a fun little piece of hardware!
 
 ## Quick Start
 
 There are two ways to run the bridge. Pick whichever fits your setup.
 
-### Option A: Local Bridge (Node.js — recommended for getting started)
+### Option A: Local Bridge (Node.js - recommended for getting started)
 
 Runs on your PC on the same network as the ESP32. Uses your GPU for fast speech recognition.
 
-**Requirements:** Node.js 18+, Python 3.10+, NVIDIA GPU (optional but recommended), [OpenClaw](https://github.com/openclaw) (an open-source AI agent framework — a self-hosted AI assistant you control. It manages your agent's personality, memory, and model routing.)
+**Requirements:** Node.js 18+, Python 3.10+, NVIDIA GPU (optional but recommended), [OpenClaw](https://github.com/openclaw) (an open-source AI agent framework - a self-hosted AI assistant you control. It manages your agent's personality, memory, and model routing.)
 
 ```bash
 # 1. Install OpenClaw (your AI agent)
@@ -109,7 +109,7 @@ On first run, the bridge will:
 
 See [walkieclaw-bridge/README.md](walkieclaw-bridge/README.md) for full docs, CLI options, and troubleshooting.
 
-### Option B: VPS Bridge (Python — for always-on remote setups)
+### Option B: VPS Bridge (Python - for always-on remote setups)
 
 Runs on a remote server. Works from anywhere with internet.
 
@@ -122,7 +122,7 @@ source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env — fill in your OpenClaw URL and API key
+# Edit .env - fill in your OpenClaw URL and API key
 
 python bridge.py
 ```
@@ -136,7 +136,7 @@ git clone https://github.com/slsah30/WalkieClaw.git
 cd WalkieClaw
 
 cp .env.example .env
-# Edit .env — set your OpenClaw URL and API key
+# Edit .env - set your OpenClaw URL and API key
 
 docker compose up -d
 ```
@@ -150,7 +150,7 @@ pip install esphome
 
 # Set up your WiFi credentials
 cp secrets.yaml.example secrets.yaml
-# Edit secrets.yaml — WiFi SSID/password, OTA password
+# Edit secrets.yaml - WiFi SSID/password, OTA password
 
 # Flash!
 esphome run walkieclaw.yaml
@@ -158,7 +158,7 @@ esphome run walkieclaw.yaml
 
 ### First-Time Device Setup
 
-No YAML editing needed for the bridge connection — it's all done on-device:
+No YAML editing needed for the bridge connection - it's all done on-device:
 
 1. **Power on.** If no WiFi is configured, it creates a `WalkieClaw-Fallback` AP.
 2. **Connect** to the AP from your phone. Enter your WiFi credentials in the captive portal.
@@ -245,7 +245,7 @@ IDLE -> RECORDING -> POLLING -> READY_TO_PLAY -> PLAYING -> IDLE
 
 ## Display Simulator
 
-Want to tweak colors and layout without flashing? Open `simulator.html` in your browser — it's a pixel-perfect replica of the 128x128 display with interactive controls, color pickers, and YAML export.
+Want to tweak colors and layout without flashing? Open `simulator.html` in your browser - it's a pixel-perfect replica of the 128x128 display with interactive controls, color pickers, and YAML export.
 
 ## Security
 
@@ -262,7 +262,7 @@ Everything is protected with a shared API key:
 
 | File | What It Does |
 |------|-------------|
-| `walkieclaw.yaml` | ESPHome firmware — the main config |
+| `walkieclaw.yaml` | ESPHome firmware - the main config |
 | `walkieclaw-bridge/` | Node.js bridge (npm package, recommended for local) |
 | `bridge.py` | Python bridge (for VPS deployments) |
 | `udp_stream.h` | C++ UDP audio sender with auth |
@@ -280,31 +280,31 @@ Everything is protected with a shared API key:
 
 So you don't have to:
 
-- **GPIO0 is a trap** on ESP32-S3 — it's a strapping pin, don't use it
-- **ES8311 register 0x12** (ADC/mic) — writing to it corrupts the DAC. Just don't.
-- **I2S bus is shared** between mic and speaker — need a 300ms delay when switching
-- **ST7735 bar widgets have inverted colors** — set the XOR of what you actually want
-- **LVGL montserrat_12 doesn't exist** — font sizes jump from 10 to 14
-- **Unicode will crash LVGL** — sanitize all AI text to ASCII before display
+- **GPIO0 is a trap** on ESP32-S3 - it's a strapping pin, don't use it
+- **ES8311 register 0x12** (ADC/mic) - writing to it corrupts the DAC. Just don't.
+- **I2S bus is shared** between mic and speaker - need a 300ms delay when switching
+- **ST7735 bar widgets have inverted colors** - set the XOR of what you actually want
+- **LVGL montserrat_12 doesn't exist** - font sizes jump from 10 to 14
+- **Unicode will crash LVGL** - sanitize all AI text to ASCII before display
 - **ESP32 I2S sends 32-bit frames** even when you configure 16-bit
 - **ESPHome uses `request_headers`** not `headers` for HTTP requests
-- **`media_player` can't send custom headers** — keep WAV endpoints open but unguessable
-- **`windowsHide: true` + `detached: true` on Windows** — detached CREATES a console window, don't use it
+- **`media_player` can't send custom headers** - keep WAV endpoints open but unguessable
+- **`windowsHide: true` + `detached: true` on Windows** - detached CREATES a console window, don't use it
 
 ## Credits & Thanks
 
-- **[Robert Lipe](https://www.robertlipe.com/449-2/)** — reverse engineered the AIPI Lite hardware, mapped the GPIO pinout, identified the ES8311 codec and display controller, and documented everything so the rest of us could build on it.
-- **[AIPI Lite](https://github.com/xorigin-ai)** by xorigin AI — the ESP32-S3 dev board with built-in mic, speaker, LCD, and LED.
-- **[ESPHome](https://esphome.io/)** — the firmware framework that makes ESP32 development actually enjoyable.
-- **[LVGL](https://lvgl.io/)** — the graphics library powering the 128x128 display UI.
-- **[OpenClaw](https://github.com/openclaw)** — the AI agent platform that gives WalkieClaw its brain.
-- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** by SYSTRAN — blazing fast speech-to-text on GPU or CPU.
-- **[Edge TTS](https://github.com/rany2/edge-tts)** by rany2 — free, high-quality text-to-speech with dozens of voices.
-- **[Espressif](https://www.espressif.com/)** — for the ESP32-S3 chip that makes this all possible.
+- **[Robert Lipe](https://www.robertlipe.com/449-2/)** - reverse engineered the AIPI Lite hardware, mapped the GPIO pinout, identified the ES8311 codec and display controller, and documented everything so the rest of us could build on it.
+- **[AIPI Lite](https://github.com/xorigin-ai)** by xorigin AI - the ESP32-S3 dev board with built-in mic, speaker, LCD, and LED.
+- **[ESPHome](https://esphome.io/)** - the firmware framework that makes ESP32 development actually enjoyable.
+- **[LVGL](https://lvgl.io/)** - the graphics library powering the 128x128 display UI.
+- **[OpenClaw](https://github.com/openclaw)** - the AI agent platform that gives WalkieClaw its brain.
+- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** by SYSTRAN - blazing fast speech-to-text on GPU or CPU.
+- **[Edge TTS](https://github.com/rany2/edge-tts)** by rany2 - free, high-quality text-to-speech with dozens of voices.
+- **[Espressif](https://www.espressif.com/)** - for the ESP32-S3 chip that makes this all possible.
 
 ## Contributing
 
-Found a bug? Have an idea? Open an issue or PR — this project is meant to be built on.
+Found a bug? Have an idea? Open an issue or PR - this project is meant to be built on.
 
 Some ideas for contributors:
 - Wake word detection (hands-free mode)
@@ -316,4 +316,4 @@ Some ideas for contributors:
 
 ## License
 
-MIT — do whatever you want with it. Build one, mod it, sell it, teach with it. Just have fun.
+MIT - do whatever you want with it. Build one, mod it, sell it, teach with it. Just have fun.
