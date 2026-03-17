@@ -60,7 +60,7 @@ There are two ways to run the bridge. Pick whichever fits your setup.
 
 Runs on your PC on the same network as the ESP32. Uses your GPU for fast speech recognition.
 
-**Requirements:** Node.js 18+, Python 3.10+, NVIDIA GPU (optional but recommended), [OpenClaw](https://github.com/openclaw)
+**Requirements:** Node.js 18+, Python 3.10+, NVIDIA GPU (optional but recommended), [OpenClaw](https://github.com/openclaw) (an open-source AI agent framework — a self-hosted AI assistant you control. It manages your agent's personality, memory, and model routing.)
 
 ```bash
 # 1. Install OpenClaw (your AI agent)
@@ -68,12 +68,27 @@ npm install -g openclaw
 openclaw configure                          # Set up your model provider
 openclaw config set gateway.mode local
 
-# 2. Enable the chat completions API
-# Add this to ~/.openclaw/openclaw.json under the "gateway" key:
-#   "http": { "endpoints": { "chatCompletions": { "enabled": true } } }
+# 2. Enable the chat completions API for the bridge
+# Open ~/.openclaw/openclaw.json in a text editor and add the "http" block
+# inside the existing "gateway" section, like this:
+#
+#   "gateway": {
+#     "mode": "local",
+#     "port": 18789,
+#     ... (keep existing settings) ...
+#     "http": {
+#       "endpoints": {
+#         "chatCompletions": { "enabled": true }
+#       }
+#     }
+#   }
 
-# 3. Install the bridge
-npm install -g walkieclaw-bridge
+# 3. Install the bridge (from the cloned repo)
+cd walkieclaw-bridge
+npm install
+npm run build
+npm link          # makes 'walkieclaw-bridge' available globally
+cd ..
 
 # 4. Install GPU whisper dependencies (optional but makes STT 60x faster)
 pip install faster-whisper

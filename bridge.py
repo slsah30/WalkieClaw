@@ -71,7 +71,7 @@ CONFIG = {
     "WHISPER_DEVICE": os.getenv("WHISPER_DEVICE", "cpu"),
 
     # --- TTS ---
-    "TTS_ENGINE": os.getenv("TTS_ENGINE", "gtts"),
+    "TTS_ENGINE": os.getenv("TTS_ENGINE", "edge"),
     "ELEVENLABS_API_KEY": os.getenv("ELEVENLABS_API_KEY", ""),
     "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", ""),
 
@@ -228,7 +228,7 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         log.error(f"Transcription error: {e}")
         return ""
     finally:
-        import shutil; shutil.copy(tmp_path, "/tmp/walkieclaw_debug_last.wav"); os.unlink(tmp_path)
+        os.unlink(tmp_path)
 
 
 # =============================================================================

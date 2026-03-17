@@ -849,7 +849,7 @@ interval:
                       } else if (status == "idle") {
                         // Still idle, keep polling
                       }
-            # Timeout after 15 polls (30s)
+            # Timeout after 45 polls (90s)
             - if:
                 condition:
                   lambda: 'return id(poll_count) >= 45 && id(voice_state) == 2;'

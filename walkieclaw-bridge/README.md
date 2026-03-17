@@ -24,7 +24,7 @@ pip install faster-whisper
 If you have an NVIDIA GPU, this gives you sub-second speech-to-text. Without it, the bridge falls back to CPU-based whisper (slower but still works).
 
 ### 3. OpenClaw
-The AI agent framework that provides the brains.
+The AI agent framework that provides the brains. OpenClaw is an open-source AI agent framework — a self-hosted AI assistant you fully control.
 
 ```bash
 npm install -g openclaw
@@ -47,10 +47,14 @@ openclaw config set gateway.mode local
 ## Quick Start
 
 ```bash
-# Install globally
-npm install -g walkieclaw-bridge
+# From the WalkieClaw repo root:
+cd walkieclaw-bridge
+npm install
+npm run build
+npm link
+cd ..
 
-# Start the bridge (auto-starts OpenClaw gateway + whisper server)
+# Now start the bridge (auto-starts OpenClaw gateway + whisper server)
 walkieclaw-bridge
 ```
 

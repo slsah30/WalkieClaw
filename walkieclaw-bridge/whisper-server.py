@@ -6,6 +6,7 @@ Usage: python whisper-server.py [--model base] [--port 8787]
 """
 import argparse
 import io
+import json
 import struct
 import sys
 import wave
@@ -47,7 +48,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
 
             text = " ".join(s.text.strip() for s in segments).strip()
-            response = f'{{"text":"{text}","duration":{info.duration:.1f}}}'
+            response = json.dumps({"text": text, "duration": round(info.duration, 1)})
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -71,7 +72,8 @@ def main():
     args = parser.parse_args()
 
     print(f"[whisper-gpu] Loading model '{args.model}' on {args.device}...")
-    model = WhisperModel(args.model, device=args.device, compute_type="float16")
+    compute_type = "float16" if args.device == "cuda" else "int8"
+    model = WhisperModel(args.model, device=args.device, compute_type=compute_type)
     print(f"[whisper-gpu] Model loaded. Listening on :{args.port}")
 
     server = HTTPServer(("127.0.0.1", args.port), Handler)
