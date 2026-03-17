@@ -6,6 +6,8 @@ Push a button. Talk. Get a spoken AI response from the little speaker. That's it
 
 Works on home WiFi or your phone's hotspot. Take it anywhere.
 
+https://github.com/user-attachments/assets/3304ada0-b248-4ab3-b90c-83d245f28b1e
+
 ## What It Does
 
 ```
