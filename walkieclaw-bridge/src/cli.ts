@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { homedir, platform } from "os";
 import { fileURLToPath } from "url";
@@ -14,16 +14,18 @@ import {
   ensureConfigDir,
   findFreeTcpPort,
   findFreeUdpPort,
+  LANGUAGE_VOICE_MAP,
   type BridgeConfig,
 } from "./config.js";
 import { DeviceManager } from "./devices.js";
 import { initWhisper, transcribe } from "./whisper.js";
 import { synthesizeSpeech, getWavUrl } from "./tts.js";
-import { sendToOpenclaw, initOpenclaw } from "./openclaw.js";
-import { i2sTo16bitPcm, getWavDuration } from "./audio.js";
+import { sendToOpenclaw, streamFromOpenclaw, initOpenclaw } from "./openclaw.js";
+import { i2sTo16bitPcm, getWavDuration, pcmToWav } from "./audio.js";
 import { sanitizeForDisplay, stripMarkdown } from "./utils.js";
 import { createUdpListener } from "./udp.js";
 import { createHttpServer } from "./server.js";
+import { TimerManager } from "./timers.js";
 
 // ---------------------------------------------------------------------------
 // Parse CLI args
@@ -55,6 +57,17 @@ function parseArgs(): Partial<BridgeConfig> {
       case "--advertise-host":
         overrides.httpAdvertiseHost = args[++i];
         break;
+      case "--max-turns":
+        overrides.maxConversationTurns = parseInt(args[++i]);
+        break;
+      case "--language": {
+        const lang = args[++i];
+        overrides.whisperLanguage = lang;
+        if (LANGUAGE_VOICE_MAP[lang] && !overrides.ttsVoice) {
+          overrides.ttsVoice = LANGUAGE_VOICE_MAP[lang];
+        }
+        break;
+      }
       case "config":
         printConfig();
         process.exit(0);
@@ -92,6 +105,8 @@ function printHelp(): void {
     --voice <voice>         Edge TTS voice (default: en-GB-RyanNeural)
     --api-key <key>         Set API key (auto-generated if not set)
     --advertise-host <ip>   IP to advertise in WAV URLs
+    --max-turns <n>         Conversation history turns to keep (default: 10)
+    --language <code>       Language code (en, es, fr, de, ja, zh, etc.)
     -h, --help              Show this help
 `);
 }
@@ -164,6 +179,34 @@ async function processAudio(
   const pcmData = i2sTo16bitPcm(rawAudio);
   console.log(`[pipeline] Processing ${pcmData.length} bytes from ${deviceIp}`);
 
+  // Walkie-talkie mode: skip AI, route audio directly to paired device
+  if (device.walkieTalkieMode && device.pairedDeviceIp) {
+    try {
+      const wav = pcmToWav(pcmData, config.sampleRate);
+      const filename = `walkie_${Date.now()}.wav`;
+      const wavPath = join(config.audioDir, filename);
+      writeFileSync(wavPath, wav);
+
+      const wavUrl = getWavUrl(wavPath, config);
+      const duration = getWavDuration(wav);
+      const partner = devices.getDevice(device.pairedDeviceIp);
+      partner.pendingNotifications.push({
+        text: sanitizeForDisplay(`Voice from ${deviceIp}`),
+        wavUrl,
+        duration: Math.round(duration * 10) / 10,
+      });
+
+      console.log(`[walkie] Routed audio from ${deviceIp} to ${device.pairedDeviceIp} (${duration.toFixed(1)}s)`);
+      device.resetPollState();
+    } catch (err: any) {
+      console.error(`[walkie] Error: ${err.message}`);
+      device.resetPollState();
+    } finally {
+      device.isProcessing = false;
+    }
+    return;
+  }
+
   try {
     // 1. Transcribe
     device.pollStage = "transcribing";
@@ -179,26 +222,67 @@ async function processAudio(
     device.pollTranscript = text;
     device.pollStage = "thinking";
 
-    // 2. Send to OpenClaw
-    const rawResponse = await sendToOpenclaw(text, deviceIp, config);
+    // 2. Add to history and send to OpenClaw (streaming)
+    device.addToHistory("user", text);
+    device.pollStage = "thinking";
+    device.pendingResponseChunks = [];
 
-    // 3. Strip markdown and generate TTS
-    const response = stripMarkdown(rawResponse);
-    device.pollStage = "speaking";
-    const wavPath = await synthesizeSpeech(response, config);
+    let chunkIndex = 0;
+    let fullResponse = "";
 
-    // 4. Store result for polling
-    const wavUrl = getWavUrl(wavPath, config);
-    const wavBuf = readFileSync(wavPath);
-    const duration = getWavDuration(wavBuf);
+    fullResponse = await streamFromOpenclaw(
+      device.conversationHistory,
+      deviceIp,
+      config,
+      async (sentence) => {
+        device.pollStage = "speaking";
+        const cleaned = stripMarkdown(sentence);
+        if (!cleaned) return;
 
-    device.pollWavUrl = wavUrl;
-    device.pollText = sanitizeForDisplay(response.slice(0, 200));
-    device.pollWavDuration = duration;
-    device.pollStatus = "ready";
-    device.pollReadyTime = Date.now();
+        const wavPath = await synthesizeSpeech(cleaned, config);
+        const wavUrl = getWavUrl(wavPath, config);
+        const wavBuf = readFileSync(wavPath);
+        const duration = getWavDuration(wavBuf);
 
-    console.log(`[pipeline] Response ready for ${deviceIp}: ${wavUrl} (${duration.toFixed(1)}s)`);
+        if (chunkIndex === 0) {
+          // First chunk: set as the immediate response
+          device.pollWavUrl = wavUrl;
+          device.pollText = sanitizeForDisplay(cleaned.slice(0, 200));
+          device.pollWavDuration = duration;
+          device.pollStatus = "ready";
+          device.pollReadyTime = Date.now();
+          console.log(`[pipeline] First chunk ready for ${deviceIp}: ${wavUrl} (${duration.toFixed(1)}s)`);
+        } else {
+          // Subsequent chunks: queue for sequential delivery
+          device.pendingResponseChunks.push({
+            wavUrl,
+            text: sanitizeForDisplay(cleaned.slice(0, 200)),
+            duration,
+          });
+          console.log(`[pipeline] Chunk ${chunkIndex + 1} queued for ${deviceIp} (${duration.toFixed(1)}s)`);
+        }
+        chunkIndex++;
+      }
+    );
+
+    // Save full response to history
+    device.addToHistory("assistant", fullResponse);
+
+    // If streaming produced no chunks (e.g., empty response), fall back
+    if (chunkIndex === 0) {
+      const fallback = stripMarkdown(fullResponse) || "I had nothing to say.";
+      const wavPath = await synthesizeSpeech(fallback, config);
+      const wavUrl = getWavUrl(wavPath, config);
+      const wavBuf = readFileSync(wavPath);
+      const duration = getWavDuration(wavBuf);
+      device.pollWavUrl = wavUrl;
+      device.pollText = sanitizeForDisplay(fallback.slice(0, 200));
+      device.pollWavDuration = duration;
+      device.pollStatus = "ready";
+      device.pollReadyTime = Date.now();
+    }
+
+    console.log(`[pipeline] All chunks ready for ${deviceIp} (${chunkIndex} total)`);
   } catch (err: any) {
     console.error(`[pipeline] Error for ${deviceIp}: ${err.message}`);
     device.resetPollState();
@@ -437,10 +521,14 @@ async function main(): Promise<void> {
   await initOpenclaw(config);
 
   // Create device manager
-  const devices = new DeviceManager();
+  const devices = new DeviceManager(config.maxConversationTurns * 2);
+
+  // Create timer manager
+  const timers = new TimerManager(config, devices);
+  timers.start();
 
   // Start HTTP server
-  await createHttpServer(config, devices);
+  await createHttpServer(config, devices, timers);
 
   // Start UDP listener
   createUdpListener(config, devices, (deviceIp) => {
@@ -469,6 +557,7 @@ async function main(): Promise<void> {
   // Graceful shutdown — kill child processes
   const shutdown = () => {
     console.log("\n[shutdown] Shutting down...");
+    timers.stop();
     if (whisperProc && !whisperProc.killed) {
       whisperProc.kill();
       console.log("[shutdown] Whisper server stopped.");

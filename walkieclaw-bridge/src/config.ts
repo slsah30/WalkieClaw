@@ -21,6 +21,8 @@ export interface BridgeConfig {
   sampleRate: number;
   outputSampleRate: number;
   audioDir: string;
+  maxConversationTurns: number;
+  esphomeConfigDir: string;
   apiKey: string;
   httpAdvertiseHost: string;
 }
@@ -130,6 +132,25 @@ export async function findFreeUdpPort(preferred: number, host: string): Promise<
   return 0;
 }
 
+export const LANGUAGE_VOICE_MAP: Record<string, string> = {
+  en: "en-GB-RyanNeural",
+  es: "es-ES-AlvaroNeural",
+  fr: "fr-FR-HenriNeural",
+  de: "de-DE-ConradNeural",
+  it: "it-IT-DiegoNeural",
+  pt: "pt-BR-AntonioNeural",
+  ja: "ja-JP-KeitaNeural",
+  ko: "ko-KR-InJoonNeural",
+  zh: "zh-CN-YunxiNeural",
+  ar: "ar-SA-HamedNeural",
+  hi: "hi-IN-MadhurNeural",
+  ru: "ru-RU-DmitryNeural",
+  nl: "nl-NL-MaartenNeural",
+  pl: "pl-PL-MarekNeural",
+  sv: "sv-SE-MattiasNeural",
+  tr: "tr-TR-AhmetNeural",
+};
+
 export function buildConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
   const saved = loadSavedConfig();
   const env = process.env;
@@ -154,6 +175,8 @@ export function buildConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig
     sampleRate: 16000,
     outputSampleRate: 16000,
     audioDir,
+    maxConversationTurns: overrides.maxConversationTurns ?? saved.maxConversationTurns ?? parseInt(env.MAX_CONVERSATION_TURNS ?? "10"),
+    esphomeConfigDir: overrides.esphomeConfigDir ?? saved.esphomeConfigDir ?? env.ESPHOME_CONFIG_DIR ?? "",
     apiKey: overrides.apiKey ?? saved.apiKey ?? env.BRIDGE_API_KEY ?? "",
     httpAdvertiseHost: overrides.httpAdvertiseHost ?? saved.httpAdvertiseHost ?? env.HTTP_ADVERTISE_HOST ?? "",
   };

@@ -1,3 +1,8 @@
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
 export interface PendingNotification {
   text: string;
   wavUrl: string;
@@ -9,6 +14,10 @@ export class DeviceState {
   audioBuffer: Buffer[] = [];
   isProcessing = false;
 
+  // Conversation history
+  conversationHistory: ChatMessage[] = [];
+  maxHistoryLength = 20; // 10 turns (user + assistant)
+
   // Poll state
   pollStatus: "idle" | "processing" | "ready" = "idle";
   pollStage: "" | "transcribing" | "thinking" | "speaking" = "";
@@ -17,6 +26,13 @@ export class DeviceState {
   pollTranscript = "";
   pollWavDuration = 0;
   pollReadyTime = 0;
+
+  // Streaming response chunks
+  pendingResponseChunks: Array<{ wavUrl: string; text: string; duration: number }> = [];
+
+  // Walkie-talkie mode
+  pairedDeviceIp: string | null = null;
+  walkieTalkieMode = false;
 
   // Pending commands
   pendingWifiSsid = "";
@@ -29,6 +45,17 @@ export class DeviceState {
 
   constructor(ip: string) {
     this.ip = ip;
+  }
+
+  addToHistory(role: ChatMessage["role"], content: string): void {
+    this.conversationHistory.push({ role, content });
+    while (this.conversationHistory.length > this.maxHistoryLength) {
+      this.conversationHistory.shift();
+    }
+  }
+
+  clearHistory(): void {
+    this.conversationHistory = [];
   }
 
   get audioBufferSize(): number {
@@ -55,12 +82,18 @@ export class DeviceState {
 export class DeviceManager {
   private devices = new Map<string, DeviceState>();
   private authenticatedUdpIps = new Set<string>();
+  private defaultMaxHistory: number;
+
+  constructor(defaultMaxHistory = 20) {
+    this.defaultMaxHistory = defaultMaxHistory;
+  }
 
   getDevice(ip: string): DeviceState {
     let device = this.devices.get(ip);
     if (!device) {
       console.log(`[devices] New device connected: ${ip}`);
       device = new DeviceState(ip);
+      device.maxHistoryLength = this.defaultMaxHistory;
       this.devices.set(ip, device);
     }
     device.lastActivity = Date.now();
@@ -108,6 +141,7 @@ export class DeviceManager {
         device.pendingNotifications.length === 0
       ) {
         console.log(`[devices] Removing stale device: ${ip}`);
+        device.clearHistory();
         this.devices.delete(ip);
         this.authenticatedUdpIps.delete(ip);
       }

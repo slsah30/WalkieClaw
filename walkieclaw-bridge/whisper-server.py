@@ -11,6 +11,7 @@ import struct
 import sys
 import wave
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 from faster_whisper import WhisperModel
 
@@ -18,10 +19,15 @@ model = None
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path != "/transcribe":
+        parsed = urlparse(self.path)
+        if parsed.path != "/transcribe":
             self.send_response(404)
             self.end_headers()
             return
+
+        # Parse language from query string: /transcribe?lang=es
+        qs = parse_qs(parsed.query)
+        language = qs.get("lang", ["en"])[0]
 
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
@@ -32,7 +38,7 @@ class Handler(BaseHTTPRequestHandler):
             if "audio/wav" in content_type or body[:4] == b"RIFF":
                 # WAV file
                 segments, info = model.transcribe(
-                    io.BytesIO(body), language="en", beam_size=1, vad_filter=True
+                    io.BytesIO(body), language=language, beam_size=1, vad_filter=True
                 )
             else:
                 # Raw 16-bit PCM at 16kHz mono — wrap in WAV
@@ -44,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
                     wf.writeframes(body)
                 wav_buf.seek(0)
                 segments, info = model.transcribe(
-                    wav_buf, language="en", beam_size=1, vad_filter=True
+                    wav_buf, language=language, beam_size=1, vad_filter=True
                 )
 
             text = " ".join(s.text.strip() for s in segments).strip()

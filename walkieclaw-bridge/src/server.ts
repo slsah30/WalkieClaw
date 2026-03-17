@@ -2,16 +2,19 @@ import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyRateLimit from "@fastify/rate-limit";
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import type { BridgeConfig } from "./config.js";
 import type { DeviceManager } from "./devices.js";
+import type { TimerManager } from "./timers.js";
 import { synthesizeSpeech, getWavUrl } from "./tts.js";
 import { getWavDuration } from "./audio.js";
 import { sanitizeForDisplay } from "./utils.js";
 
 export async function createHttpServer(
   config: BridgeConfig,
-  devices: DeviceManager
+  devices: DeviceManager,
+  timers?: TimerManager
 ) {
   const app = Fastify({ logger: false });
 
@@ -88,15 +91,28 @@ export async function createHttpServer(
       if (device.pollTranscript) resp.transcript = device.pollTranscript;
       return resp;
     } else if (device.pollStatus === "ready") {
+      const hasMore = device.pendingResponseChunks.length > 0;
       const result = {
         status: "ready",
         wav_url: device.pollWavUrl,
         text: device.pollText,
         transcript: device.pollTranscript,
         duration: Math.round(device.pollWavDuration * 10) / 10,
+        has_more: hasMore,
       };
-      device.resetPollState();
-      console.log(`[http] Poll response served to ${ip}`);
+
+      // If there are more chunks, queue up the next one immediately
+      if (hasMore) {
+        const next = device.pendingResponseChunks.shift()!;
+        device.pollWavUrl = next.wavUrl;
+        device.pollText = next.text;
+        device.pollWavDuration = next.duration;
+        device.pollReadyTime = Date.now();
+        // Keep pollStatus as "ready" so next poll gets the next chunk
+      } else {
+        device.resetPollState();
+      }
+      console.log(`[http] Poll response served to ${ip}${hasMore ? ` (${device.pendingResponseChunks.length + 1} more)` : ""}`);
       return result;
     }
     return { status: "idle" };
@@ -112,6 +128,9 @@ export async function createHttpServer(
       is_processing: d.isProcessing,
       last_activity: Math.round((Date.now() - d.lastActivity) / 1000 * 10) / 10,
       pending_notifications: d.pendingNotifications.length,
+      conversation_length: d.conversationHistory.length,
+      last_transcript: d.pollTranscript || undefined,
+      last_response: d.pollText || undefined,
     }));
     return { devices: deviceList, count: deviceList.length };
   });
@@ -175,6 +194,211 @@ export async function createHttpServer(
       }
       return { status: "broadcast", ssid, devices: count };
     }
+  });
+
+  // GET /dashboard
+  app.get("/dashboard", async (request, reply) => {
+    // Allow auth via query param for browser access
+    const queryKey = (request.query as any)?.key;
+    if (queryKey && config.apiKey && queryKey !== config.apiKey) {
+      return reply.code(401).send("Unauthorized");
+    }
+
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const htmlPaths = [
+      join(__dirname, "..", "public", "dashboard.html"),
+      join(__dirname, "..", "..", "public", "dashboard.html"),
+    ];
+    const htmlPath = htmlPaths.find(p => existsSync(p));
+    if (!htmlPath) {
+      return reply.code(404).send("Dashboard not found");
+    }
+    const html = readFileSync(htmlPath, "utf-8");
+    return reply.type("text/html").send(html);
+  });
+
+  // GET /api/history/:ip
+  app.get("/api/history/:ip", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const ip = (request.params as any).ip;
+    const device = devices.getDeviceIfExists(ip);
+    if (!device) return reply.code(404).send({ error: "Device not found" });
+    return { ip, history: device.conversationHistory, count: device.conversationHistory.length };
+  });
+
+  // DELETE /api/history/:ip
+  app.delete("/api/history/:ip", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const ip = (request.params as any).ip;
+    const device = devices.getDeviceIfExists(ip);
+    if (!device) return reply.code(404).send({ error: "Device not found" });
+    device.clearHistory();
+    return { status: "cleared", ip };
+  });
+
+  // POST /api/pair
+  app.post("/api/pair", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const body = request.body as any;
+    const deviceA = (body?.device_a ?? "").trim();
+    const deviceB = (body?.device_b ?? "").trim();
+    if (!deviceA || !deviceB) return reply.code(400).send({ error: "device_a and device_b are required" });
+    if (deviceA === deviceB) return reply.code(400).send({ error: "Cannot pair a device with itself" });
+
+    const a = devices.getDevice(deviceA);
+    const b = devices.getDevice(deviceB);
+    a.pairedDeviceIp = deviceB;
+    a.walkieTalkieMode = true;
+    b.pairedDeviceIp = deviceA;
+    b.walkieTalkieMode = true;
+
+    console.log(`[http] Paired ${deviceA} <-> ${deviceB} (walkie-talkie mode)`);
+    return { status: "paired", device_a: deviceA, device_b: deviceB };
+  });
+
+  // POST /api/unpair
+  app.post("/api/unpair", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const body = request.body as any;
+    const deviceIp = (body?.device ?? "").trim();
+    if (!deviceIp) return reply.code(400).send({ error: "device is required" });
+
+    const dev = devices.getDeviceIfExists(deviceIp);
+    if (!dev) return reply.code(404).send({ error: "Device not found" });
+
+    const partnerId = dev.pairedDeviceIp;
+    dev.pairedDeviceIp = null;
+    dev.walkieTalkieMode = false;
+
+    if (partnerId) {
+      const partner = devices.getDeviceIfExists(partnerId);
+      if (partner) {
+        partner.pairedDeviceIp = null;
+        partner.walkieTalkieMode = false;
+      }
+    }
+
+    console.log(`[http] Unpaired ${deviceIp}${partnerId ? ` from ${partnerId}` : ""}`);
+    return { status: "unpaired", device: deviceIp, was_paired_with: partnerId || null };
+  });
+
+  // GET /api/pairs
+  app.get("/api/pairs", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const pairs: Array<{ device_a: string; device_b: string }> = [];
+    const seen = new Set<string>();
+    for (const dev of devices.getAllDevices()) {
+      if (dev.walkieTalkieMode && dev.pairedDeviceIp && !seen.has(dev.ip)) {
+        pairs.push({ device_a: dev.ip, device_b: dev.pairedDeviceIp });
+        seen.add(dev.ip);
+        seen.add(dev.pairedDeviceIp);
+      }
+    }
+    return { pairs, count: pairs.length };
+  });
+
+  // POST /api/timer
+  app.post("/api/timer", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    if (!timers) return reply.code(501).send({ error: "Timers not available" });
+
+    const body = request.body as any;
+    const text = (body?.text ?? "").trim();
+    if (!text) return reply.code(400).send({ error: "text is required" });
+
+    const delaySec = parseInt(body?.delay_seconds ?? "0");
+    if (delaySec <= 0) return reply.code(400).send({ error: "delay_seconds must be > 0" });
+
+    const deviceIp = (body?.device ?? "").trim();
+    const timer = timers.schedule(text, delaySec * 1000, deviceIp);
+    return {
+      status: "scheduled",
+      id: timer.id,
+      text: text.slice(0, 100),
+      fires_at: new Date(timer.fireAt).toISOString(),
+      delay_seconds: delaySec,
+    };
+  });
+
+  // GET /api/timers
+  app.get("/api/timers", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    if (!timers) return { timers: [], count: 0 };
+
+    const list = timers.list().map(t => ({
+      id: t.id,
+      text: t.text.slice(0, 100),
+      fires_at: new Date(t.fireAt).toISOString(),
+      seconds_remaining: Math.max(0, Math.round((t.fireAt - Date.now()) / 1000)),
+      device: t.deviceIp || "all",
+    }));
+    return { timers: list, count: list.length };
+  });
+
+  // DELETE /api/timer/:id
+  app.delete("/api/timer/:id", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    if (!timers) return reply.code(501).send({ error: "Timers not available" });
+
+    const id = (request.params as any).id;
+    const cancelled = timers.cancel(id);
+    if (!cancelled) return reply.code(404).send({ error: "Timer not found" });
+    return { status: "cancelled", id };
+  });
+
+  // POST /api/ota — trigger ESPHome OTA update to a device
+  let otaInProgress = false;
+  app.post("/api/ota", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    if (otaInProgress) return reply.code(409).send({ error: "OTA already in progress" });
+
+    const body = request.body as any;
+    const deviceIp = (body?.device ?? "").trim();
+    if (!deviceIp) return reply.code(400).send({ error: "device IP is required" });
+
+    const configDir = config.esphomeConfigDir;
+    if (!configDir) {
+      return reply.code(501).send({ error: "esphomeConfigDir not configured" });
+    }
+
+    const yamlPath = join(configDir, "walkieclaw.yaml");
+    if (!existsSync(yamlPath)) {
+      return reply.code(404).send({ error: `walkieclaw.yaml not found in ${configDir}` });
+    }
+
+    otaInProgress = true;
+    console.log(`[ota] Starting OTA to ${deviceIp} from ${yamlPath}`);
+
+    // Run ESPHome OTA in background
+    const { spawn } = await import("child_process");
+    const proc = spawn("esphome", ["run", yamlPath, "--device", deviceIp], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      cwd: configDir,
+    });
+
+    const output: string[] = [];
+    proc.stdout?.on("data", (d: Buffer) => {
+      const line = d.toString().trim();
+      if (line) { output.push(line); console.log(`[ota] ${line}`); }
+    });
+    proc.stderr?.on("data", (d: Buffer) => {
+      const line = d.toString().trim();
+      if (line) { output.push(line); console.log(`[ota] ${line}`); }
+    });
+    proc.on("close", (code) => {
+      otaInProgress = false;
+      console.log(`[ota] Finished with code ${code}`);
+    });
+
+    return { status: "started", device: deviceIp, message: "OTA update started. Check bridge logs for progress." };
+  });
+
+  // GET /api/ota/status
+  app.get("/api/ota/status", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    return { in_progress: otaInProgress };
   });
 
   await app.listen({ port: config.httpPort, host: config.httpHost });

@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WalkieClaw Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { color: #e94560; margin-bottom: 5px; font-size: 1.6em; }
+  h2 { color: #0f3460; background: #e94560; padding: 8px 12px; border-radius: 6px 6px 0 0; font-size: 1em; margin-top: 20px; }
+  .subtitle { color: #888; font-size: 0.85em; margin-bottom: 20px; }
+  .card { background: #16213e; border-radius: 0 0 6px 6px; padding: 15px; margin-bottom: 4px; }
+  .status-bar { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 10px; }
+  .status-item { background: #0f3460; padding: 10px 16px; border-radius: 6px; min-width: 120px; }
+  .status-item .label { font-size: 0.75em; color: #888; text-transform: uppercase; }
+  .status-item .value { font-size: 1.3em; font-weight: bold; color: #00d2ff; }
+  .status-item .value.ok { color: #4caf50; }
+  .status-item .value.warn { color: #ff9800; }
+  .status-item .value.err { color: #f44336; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+  th { text-align: left; padding: 8px; color: #e94560; border-bottom: 1px solid #333; font-size: 0.8em; text-transform: uppercase; }
+  td { padding: 8px; border-bottom: 1px solid #222; }
+  tr:hover td { background: #1a2a4a; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: bold; }
+  .badge-idle { background: #2e7d32; color: #fff; }
+  .badge-processing { background: #f57c00; color: #fff; }
+  .badge-ready { background: #1565c0; color: #fff; }
+  .form-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  input, select { background: #0f3460; border: 1px solid #333; color: #e0e0e0; padding: 8px 12px; border-radius: 4px; font-size: 0.9em; }
+  input:focus, select:focus { outline: none; border-color: #e94560; }
+  input[type=text] { flex: 1; min-width: 200px; }
+  input[type=number] { width: 100px; }
+  button { background: #e94560; color: #fff; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 0.9em; font-weight: bold; }
+  button:hover { background: #c73550; }
+  button.secondary { background: #0f3460; }
+  button.secondary:hover { background: #1a4a80; }
+  button.danger { background: #c62828; }
+  button.danger:hover { background: #a01010; }
+  .history-panel { max-height: 300px; overflow-y: auto; }
+  .msg { padding: 6px 10px; margin: 4px 0; border-radius: 6px; font-size: 0.9em; }
+  .msg-user { background: #0f3460; margin-left: 40px; }
+  .msg-assistant { background: #1a3a5e; margin-right: 40px; }
+  .msg .role { font-size: 0.7em; color: #888; text-transform: uppercase; }
+  .timer-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #222; }
+  .timer-text { flex: 1; }
+  .timer-time { color: #00d2ff; font-weight: bold; margin: 0 15px; min-width: 60px; text-align: right; }
+  .empty { color: #555; font-style: italic; padding: 10px; }
+  #toast { position: fixed; bottom: 20px; right: 20px; background: #4caf50; color: #fff; padding: 12px 20px; border-radius: 6px; display: none; z-index: 100; font-weight: bold; }
+  #toast.error { background: #f44336; }
+  .auth-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 200; }
+  .auth-box { background: #16213e; padding: 30px; border-radius: 10px; text-align: center; }
+  .auth-box h2 { background: none; color: #e94560; margin: 0 0 15px 0; padding: 0; }
+  .auth-box input { margin: 10px 0; width: 300px; }
+</style>
+</head>
+<body>
+
+<div id="auth-overlay" class="auth-overlay" style="display:none">
+  <div class="auth-box">
+    <h2>WalkieClaw Dashboard</h2>
+    <p style="color:#888;margin-bottom:15px">Enter your bridge API key</p>
+    <input type="password" id="auth-key" placeholder="API Key" onkeydown="if(event.key==='Enter')doAuth()">
+    <br>
+    <button onclick="doAuth()" style="margin-top:10px">Connect</button>
+  </div>
+</div>
+
+<h1>WalkieClaw Dashboard</h1>
+<p class="subtitle">Real-time bridge monitoring and control</p>
+
+<div class="status-bar" id="status-bar">
+  <div class="status-item"><div class="label">Status</div><div class="value" id="st-status">--</div></div>
+  <div class="status-item"><div class="label">Devices</div><div class="value" id="st-devices">0</div></div>
+  <div class="status-item"><div class="label">Timers</div><div class="value" id="st-timers">0</div></div>
+  <div class="status-item"><div class="label">Last Update</div><div class="value" id="st-updated">--</div></div>
+</div>
+
+<h2>Connected Devices</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>IP</th><th>Status</th><th>Last Activity</th><th>Conversation</th><th>Notifications</th></tr></thead>
+    <tbody id="devices-tbody"><tr><td colspan="5" class="empty">No devices connected</td></tr></tbody>
+  </table>
+</div>
+
+<h2>Conversation History</h2>
+<div class="card">
+  <div class="form-row">
+    <select id="history-device"><option value="">Select a device...</option></select>
+    <button class="secondary" onclick="loadHistory()">Load</button>
+    <button class="secondary" onclick="clearHistory()">Clear</button>
+  </div>
+  <div class="history-panel" id="history-panel">
+    <p class="empty">Select a device to view conversation history</p>
+  </div>
+</div>
+
+<h2>Send Notification</h2>
+<div class="card">
+  <div class="form-row">
+    <input type="text" id="notify-text" placeholder="Message to speak on the device...">
+    <select id="notify-device"><option value="">All Devices</option></select>
+    <button onclick="sendNotify()">Send</button>
+  </div>
+</div>
+
+<h2>Set Timer</h2>
+<div class="card">
+  <div class="form-row">
+    <input type="text" id="timer-text" placeholder="Reminder message...">
+    <input type="number" id="timer-delay" placeholder="Seconds" min="1" value="60">
+    <select id="timer-device"><option value="">All Devices</option></select>
+    <button onclick="setTimer()">Set Timer</button>
+  </div>
+</div>
+
+<h2>Active Timers</h2>
+<div class="card">
+  <div id="timers-list"><p class="empty">No active timers</p></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let API_KEY = localStorage.getItem('wc_api_key') || '';
+const BASE = location.origin;
+
+function headers() {
+  const h = { 'Content-Type': 'application/json' };
+  if (API_KEY) h['X-API-Key'] = API_KEY;
+  return h;
+}
+
+function toast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = isError ? 'error' : '';
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3000);
+}
+
+function doAuth() {
+  API_KEY = document.getElementById('auth-key').value.trim();
+  localStorage.setItem('wc_api_key', API_KEY);
+  document.getElementById('auth-overlay').style.display = 'none';
+  refresh();
+}
+
+// Check for key in URL query param
+const urlKey = new URLSearchParams(location.search).get('key');
+if (urlKey) {
+  API_KEY = urlKey;
+  localStorage.setItem('wc_api_key', API_KEY);
+}
+
+async function fetchApi(path, opts = {}) {
+  const resp = await fetch(BASE + path, { headers: headers(), ...opts });
+  if (resp.status === 401) {
+    document.getElementById('auth-overlay').style.display = 'flex';
+    throw new Error('Unauthorized');
+  }
+  return resp.json();
+}
+
+async function refreshDevices() {
+  try {
+    const data = await fetchApi('/api/devices');
+    const tbody = document.getElementById('devices-tbody');
+    const devSelect = document.getElementById('history-device');
+    const notifySelect = document.getElementById('notify-device');
+    const timerSelect = document.getElementById('timer-device');
+
+    // Update device selects
+    const currentHistVal = devSelect.value;
+    devSelect.innerHTML = '<option value="">Select a device...</option>';
+    notifySelect.innerHTML = '<option value="">All Devices</option>';
+    timerSelect.innerHTML = '<option value="">All Devices</option>';
+
+    if (data.devices.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No devices connected</td></tr>';
+      document.getElementById('st-devices').textContent = '0';
+      return;
+    }
+
+    document.getElementById('st-devices').textContent = data.count;
+
+    tbody.innerHTML = data.devices.map(d => {
+      const badge = d.poll_status === 'idle' ? 'badge-idle' : d.poll_status === 'processing' ? 'badge-processing' : 'badge-ready';
+      return `<tr>
+        <td><strong>${d.ip}</strong></td>
+        <td><span class="badge ${badge}">${d.poll_status}</span></td>
+        <td>${d.last_activity.toFixed(0)}s ago</td>
+        <td>${d.conversation_length ?? '-'} msgs</td>
+        <td>${d.pending_notifications} pending</td>
+      </tr>`;
+    }).join('');
+
+    data.devices.forEach(d => {
+      devSelect.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
+      notifySelect.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
+      timerSelect.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
+    });
+
+    if (currentHistVal) devSelect.value = currentHistVal;
+  } catch (e) {
+    if (e.message !== 'Unauthorized') console.error('Device refresh error:', e);
+  }
+}
+
+async function refreshTimers() {
+  try {
+    const data = await fetchApi('/api/timers');
+    document.getElementById('st-timers').textContent = data.count;
+    const container = document.getElementById('timers-list');
+
+    if (data.timers.length === 0) {
+      container.innerHTML = '<p class="empty">No active timers</p>';
+      return;
+    }
+
+    container.innerHTML = data.timers.map(t => `
+      <div class="timer-item">
+        <div class="timer-text">${t.text}</div>
+        <div class="timer-time">${t.seconds_remaining}s</div>
+        <button class="danger" onclick="cancelTimer('${t.id}')" style="padding:4px 10px;font-size:0.8em">Cancel</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    if (e.message !== 'Unauthorized') console.error('Timer refresh error:', e);
+  }
+}
+
+async function refreshHealth() {
+  try {
+    const data = await fetchApi('/health');
+    const el = document.getElementById('st-status');
+    el.textContent = data.status === 'ok' ? 'Online' : data.status;
+    el.className = 'value ' + (data.status === 'ok' ? 'ok' : 'err');
+    document.getElementById('st-updated').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    if (e.message !== 'Unauthorized') {
+      document.getElementById('st-status').textContent = 'Offline';
+      document.getElementById('st-status').className = 'value err';
+    }
+  }
+}
+
+async function loadHistory() {
+  const ip = document.getElementById('history-device').value;
+  if (!ip) return toast('Select a device first', true);
+  try {
+    const data = await fetchApi(`/api/history/${ip}`);
+    const panel = document.getElementById('history-panel');
+    if (!data.history || data.history.length === 0) {
+      panel.innerHTML = '<p class="empty">No conversation history</p>';
+      return;
+    }
+    panel.innerHTML = data.history.map(m =>
+      `<div class="msg msg-${m.role}"><div class="role">${m.role}</div>${escHtml(m.content)}</div>`
+    ).join('');
+    panel.scrollTop = panel.scrollHeight;
+  } catch (e) { toast('Failed to load history', true); }
+}
+
+async function clearHistory() {
+  const ip = document.getElementById('history-device').value;
+  if (!ip) return toast('Select a device first', true);
+  try {
+    await fetchApi(`/api/history/${ip}`, { method: 'DELETE' });
+    document.getElementById('history-panel').innerHTML = '<p class="empty">History cleared</p>';
+    toast('History cleared');
+  } catch (e) { toast('Failed to clear history', true); }
+}
+
+async function sendNotify() {
+  const text = document.getElementById('notify-text').value.trim();
+  if (!text) return toast('Enter a message', true);
+  const device = document.getElementById('notify-device').value;
+  try {
+    const body = { text };
+    if (device) body.device = device;
+    await fetchApi('/api/notify', { method: 'POST', body: JSON.stringify(body) });
+    document.getElementById('notify-text').value = '';
+    toast('Notification sent!');
+  } catch (e) { toast('Failed to send notification', true); }
+}
+
+async function setTimer() {
+  const text = document.getElementById('timer-text').value.trim();
+  const delay = parseInt(document.getElementById('timer-delay').value);
+  if (!text) return toast('Enter a reminder message', true);
+  if (!delay || delay <= 0) return toast('Enter a valid delay in seconds', true);
+  const device = document.getElementById('timer-device').value;
+  try {
+    const body = { text, delay_seconds: delay };
+    if (device) body.device = device;
+    await fetchApi('/api/timer', { method: 'POST', body: JSON.stringify(body) });
+    document.getElementById('timer-text').value = '';
+    toast(`Timer set for ${delay}s!`);
+    refreshTimers();
+  } catch (e) { toast('Failed to set timer', true); }
+}
+
+async function cancelTimer(id) {
+  try {
+    await fetchApi(`/api/timer/${id}`, { method: 'DELETE' });
+    toast('Timer cancelled');
+    refreshTimers();
+  } catch (e) { toast('Failed to cancel timer', true); }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function refresh() {
+  await Promise.all([refreshHealth(), refreshDevices(), refreshTimers()]);
+}
+
+// Initial load
+if (!API_KEY) {
+  document.getElementById('auth-overlay').style.display = 'flex';
+} else {
+  refresh();
+}
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

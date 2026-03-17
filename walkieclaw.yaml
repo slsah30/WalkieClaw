@@ -35,6 +35,11 @@ substitutions:
   bridge_udp_port: "12345"
   bridge_http_port: "8080"
   sleep_timeout_ms: "300000"
+  # Battery ADC voltage divider multiplier. Calibrate by comparing
+  # raw ADC voltage (in logs) with a multimeter reading on the battery.
+  # Default 2.5 works for most AIPI Lite boards. Adjust if battery
+  # percentage never reaches 100% when fully charged.
+  battery_voltage_multiplier: "2.5"
 
 esphome:
   name: ${device_name}
@@ -70,6 +75,7 @@ esphome:
           }
       - lambda: |-
           id(last_activity_ms) = millis();
+          ESP_LOGI("boot", "Volume restored: %.0f%%", id(speaker_volume) * 100.0f);
       - if:
           condition:
             lambda: 'return id(cfg_bridge_host).state.empty();'
@@ -419,6 +425,25 @@ switch:
     name: "Speaker Amp"
     restore_mode: ALWAYS_ON
 
+  # --- Wake Word Enable (configurable via web UI) ---
+  - platform: template
+    name: "Wake Word Enabled"
+    id: cfg_wake_word_enabled
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    icon: "mdi:account-voice"
+    entity_category: config
+    on_turn_on:
+      - lambda: ESP_LOGI("wake", "Wake word detection enabled");
+      - microphone.capture:
+          id: mic_input
+    on_turn_off:
+      - lambda: |-
+          ESP_LOGI("wake", "Wake word detection disabled");
+          if (id(voice_state) == 0) {
+            // Only stop mic if not in an active recording session
+          }
+
 # --- Status LED (WS2812 on GPIO46) ---
 light:
   - platform: esp32_rmt_led_strip
@@ -481,11 +506,69 @@ microphone:
     pdm: false
     on_data:
       - lambda: |-
+          // Only send audio to bridge when actively recording (voice_state == 1)
+          if (id(voice_state) != 1) return;
           static int count = 0;
           if (count++ % 50 == 0) {
             ESP_LOGW("udp", "Sending %d bytes to bridge", x.size());
           }
           udp_stream.send(x.data(), x.size());
+
+# =============================================================================
+# Wake Word Detection (on-device, ESP32-S3)
+# =============================================================================
+# Listens for "Hey Jarvis" wake word via micro_wake_word.
+# When detected, auto-starts recording (same as button press).
+# Enable/disable via the cfg_wake_word_enabled switch in the web UI.
+# Disabled by default to save battery.
+# =============================================================================
+micro_wake_word:
+  models:
+    - model: hey_jarvis
+  on_wake_word_detected:
+    - lambda: |-
+        if (!id(cfg_wake_word_enabled).state) return;
+        if (id(voice_state) != 0) return;  // Only trigger from IDLE
+        ESP_LOGI("wake", "Wake word detected! Starting recording...");
+    - if:
+        condition:
+          and:
+            - switch.is_on: cfg_wake_word_enabled
+            - lambda: 'return id(voice_state) == 0;'
+        then:
+          # Same sequence as button press: start recording
+          - lambda: |-
+              id(voice_state) = 1;  // RECORDING
+              id(last_activity_ms) = millis();
+              // Send keyed START marker
+              std::string key = id(cfg_api_key).state;
+              if (!key.empty()) {
+                udp_stream.send_keyed_start(key.substr(0, 8).c_str());
+              } else {
+                udp_stream.send_marker("START");
+              }
+          - light.turn_on:
+              id: status_led
+              brightness: 15%
+              red: 100%
+              green: 0%
+              blue: 0%
+          - lvgl.label.update:
+              id: lbl_action
+              text: "Listening..."
+          - microphone.capture:
+              id: mic_input
+          # Auto-stop after 10 seconds max recording
+          - delay: 10s
+          - if:
+              condition:
+                lambda: 'return id(voice_state) == 1;'
+              then:
+                - lambda: |-
+                    id(voice_state) = 2;  // POLLING
+                    udp_stream.send_marker("STOP");
+                - microphone.stop_capture:
+                    id: mic_input
 
 # =============================================================================
 # Scripts
@@ -1068,17 +1151,28 @@ sensor:
     attenuation: 12db
     samples: 10
     filters:
-      - multiply: 2.5
+      - multiply: ${battery_voltage_multiplier}
     on_value:
       then:
         - lambda: |-
-            // LiPo: 4.2V=100%, 3.7V=50%, 3.3V=10%, 3.0V=0%
             float v = x;
-            int pct;
-            if (v >= 4.2f) pct = 100;
-            else if (v <= 3.0f) pct = 0;
-            else pct = (int)((v - 3.0f) / 1.2f * 100.0f);
+            ESP_LOGD("battery", "ADC voltage after multiply: %.3fV", v);
 
+            // LiPo discharge curve (more accurate than linear):
+            // 4.20V=100%, 4.10V=90%, 3.95V=70%, 3.80V=50%,
+            // 3.70V=30%, 3.50V=10%, 3.30V=0%
+            int pct;
+            if (v >= 4.20f) pct = 100;
+            else if (v >= 4.10f) pct = 90 + (int)((v - 4.10f) / 0.10f * 10.0f);
+            else if (v >= 3.95f) pct = 70 + (int)((v - 3.95f) / 0.15f * 20.0f);
+            else if (v >= 3.80f) pct = 50 + (int)((v - 3.80f) / 0.15f * 20.0f);
+            else if (v >= 3.70f) pct = 30 + (int)((v - 3.70f) / 0.10f * 20.0f);
+            else if (v >= 3.50f) pct = 10 + (int)((v - 3.50f) / 0.20f * 20.0f);
+            else if (v >= 3.30f) pct = (int)((v - 3.30f) / 0.20f * 10.0f);
+            else pct = 0;
+
+            if (pct > 100) pct = 100;
+            if (pct < 0) pct = 0;
             id(battery_pct) = pct;
 
             char buf[8];

@@ -31,7 +31,7 @@ export async function initWhisper(_modelName: string): Promise<void> {
 export async function transcribe(
   pcmData: Buffer,
   sampleRate: number,
-  _language = "en"
+  language = "en"
 ): Promise<string> {
   try {
     // Resample to 16kHz if needed
@@ -39,7 +39,7 @@ export async function transcribe(
 
     const startTime = Date.now();
 
-    const resp = await fetch(`${WHISPER_URL}/transcribe`, {
+    const resp = await fetch(`${WHISPER_URL}/transcribe?lang=${encodeURIComponent(language)}`, {
       method: "POST",
       headers: { "Content-Type": "audio/pcm" },
       body: new Uint8Array(pcm16k),
