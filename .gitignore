@@ -35,3 +35,13 @@ TAILSCALE.md
 
 # Test files
 udp_test.h
+
+# walkieclaw-bridge build artifacts
+walkieclaw-bridge/node_modules/
+walkieclaw-bridge/dist/
+walkieclaw-bridge/*.log
+walkieclaw-bridge/.tsbuildinfo
+
+# OS files
+Thumbs.db
+.DS_Store

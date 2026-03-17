@@ -24,8 +24,8 @@ The LED changes color:             Red → Blue → Orange → Green (ready agai
 
 ```
   +--------------+         UDP audio        +------------------+
-  |  AIPI Lite   | -----------------------> |                  |
-  |  (ESP32-S3)  |                          |   bridge.py      |
+  |  ESP32-S3    | -----------------------> |                  |
+  |              |                          |   bridge.py      |
   |              |    HTTP poll (2s)        |   (your PC/VPS)  |
   |  Mic ------> | -----------------------> |                  |
   |  Speaker <-- | <--- HTTP GET WAV ------- |  Whisper STT     |
@@ -39,7 +39,7 @@ All connections are ESP32-initiated (outbound only). No port forwarding, no tunn
 
 ## Hardware
 
-You need one thing: an **AIPI Lite** board (~$15). Everything else is built in.
+You need an **ESP32-S3 board** with a mic and speaker. We recommend the **AIPI Lite** (~$15) which has everything built in.
 
 | Component | Details |
 |-----------|---------|
@@ -60,7 +60,7 @@ The bridge is a Python script that does the heavy lifting — speech recognition
 
 ```bash
 git clone https://github.com/slsah30/WalkieClaw.git
-cd aipi-openclaw
+cd WalkieClaw
 
 # Create a virtual environment
 python3 -m venv venv
@@ -91,7 +91,7 @@ cp secrets.yaml.example secrets.yaml
 # Edit secrets.yaml — WiFi SSID/password, OTA password
 
 # Flash!
-esphome run aipi-openclaw-direct.yaml
+esphome run walkieclaw.yaml
 ```
 
 ### 3. First-Time Device Setup
@@ -171,18 +171,21 @@ Everything is protected with a shared API key:
 
 | File | What It Does |
 |------|-------------|
-| `aipi-openclaw-direct.yaml` | ESPHome firmware — the main config |
+| `walkieclaw.yaml` | ESPHome firmware — the main config |
+| `walkieclaw-relay.yaml` | Legacy ESPHome firmware (relay mode) |
 | `bridge.py` | Voice bridge (Whisper + OpenClaw + Edge TTS) |
+| `walkieclaw-bridge/` | Node.js bridge (npm package — alternative to bridge.py) |
 | `udp_stream.h` | C++ UDP audio sender with auth |
 | `wifi_connect.h` | WiFi network switching helper |
 | `config.html` | On-device setup page |
 | `simulator.html` | Browser-based display simulator |
-| `upd_relay.py` | UDP relay (for indirect routing setups) |
+| `udp_relay.py` | UDP relay (for indirect routing setups) |
 | `secrets.yaml.example` | Template for WiFi/OTA credentials |
 | `local.env.example` | Bridge config for local mode |
 | `vps.env.example` | Bridge config for VPS mode |
 | `setup.sh` | Step-by-step setup reference |
 | `requirements.txt` | Python dependencies |
+| `LICENSE` | MIT license |
 
 ## Things We Learned the Hard Way
 

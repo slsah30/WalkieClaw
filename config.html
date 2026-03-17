@@ -207,7 +207,7 @@ function generate() {
   if (!apiKey) apiKey = randomHex(16);
   if (!otaPass) otaPass = 'walkieclaw-ota-' + randomHex(4);
   const encKey = randomBase64(32);
-  const audioDir = mode === 'local' ? './audio' : '/tmp/aipi-bridge-audio';
+  const audioDir = mode === 'local' ? './audio' : '/tmp/walkieclaw-audio';
 
   // .env
   const env = [

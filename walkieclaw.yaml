@@ -29,7 +29,7 @@
 # =============================================================================
 
 substitutions:
-  device_name: "aipi-openclaw-direct"
+  device_name: "walkieclaw"
   friendly_name: "WalkieClaw"
   # bridge_host is now configured at runtime via the web UI (text entity cfg_bridge_host)
   bridge_udp_port: "12345"
@@ -585,6 +585,9 @@ text:
     min_length: 0
     max_length: 64
     mode: text
+    set_action:
+      - lambda: |-
+          id(cfg_bridge_host).publish_state(x);
     on_value:
       then:
         - lambda: |-
@@ -606,6 +609,9 @@ text:
     min_length: 0
     max_length: 64
     mode: text
+    set_action:
+      - lambda: |-
+          id(cfg_api_key).publish_state(x);
 
 # =============================================================================
 # Buttons

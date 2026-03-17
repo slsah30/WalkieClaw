@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-AIPI Lite → OpenClaw VPS Voice Bridge
-======================================
+WalkieClaw Voice Bridge (Multi-Device)
+=======================================
 
 Architecture:
-  [AIPI Lite] --UDP audio--> [This Bridge] --HTTP--> [OpenClaw VPS]
-  [AIPI Lite] --HTTP poll--> [This Bridge] <--text-- [OpenClaw VPS]
-  [AIPI Lite] <--HTTP GET--- [This Bridge] (fetch WAV)
+  [ESP32] --UDP audio--> [This Bridge] --HTTP--> [OpenClaw VPS]
+  [ESP32] --HTTP poll--> [This Bridge] <--text-- [OpenClaw VPS]
+  [ESP32] <--HTTP GET--- [This Bridge] (fetch WAV)
 
 The bridge handles:
   1. Receiving raw I2S audio via UDP from the ESP32
@@ -15,6 +15,10 @@ The bridge handles:
   4. Converting the response to speech (Edge TTS)
   5. Storing result for HTTP polling by ESP32
   6. Serving the WAV file over HTTP for the ESP32 to stream
+
+Multi-device: Each device is keyed by source IP. Per-device state
+(audio buffer, poll status, notifications) is isolated so multiple
+WalkieClaw devices can share one bridge without cross-talk.
 
 Dependencies:
   pip install aioesphomeapi faster-whisper gtts pydub requests aiohttp edge-tts
@@ -82,7 +86,7 @@ CONFIG = {
     "HTTP_ADVERTISE_HOST": os.getenv("HTTP_ADVERTISE_HOST", ""),
 
     # --- Paths ---
-    "AUDIO_DIR": os.getenv("AUDIO_DIR", "/tmp/aipi-bridge-audio"),
+    "AUDIO_DIR": os.getenv("AUDIO_DIR", "/tmp/walkieclaw-audio"),
     "BEEP_FILE": os.getenv("BEEP_FILE", "beep.wav"),
 
     # --- Security ---
@@ -99,20 +103,15 @@ logging.basicConfig(
 log = logging.getLogger("bridge")
 
 # =============================================================================
-# Global State
+# Per-Device State
 # =============================================================================
-class BridgeState:
-    def __init__(self):
-        self.is_listening = False
-        self.is_processing = False
-        self.is_speaking = False
+class DeviceState:
+    """State for a single WalkieClaw device, keyed by IP address."""
+    def __init__(self, ip: str):
+        self.ip = ip
         self.audio_buffer = bytearray()
-        self.current_wav_path: Optional[str] = None
-        self.last_activity = time.time()
-        self.esphome_client = None
-        self.esphome_services = {}
-        self.whisper_model = None
-        # --- Poll state (for HTTP polling by ESP32) ---
+        self.is_processing = False
+        # --- Poll state (for HTTP polling by this device) ---
         self.poll_status = "idle"        # "idle" | "processing" | "ready"
         self.poll_stage = ""             # "transcribing" | "thinking" | "speaking"
         self.poll_wav_url = ""
@@ -120,11 +119,35 @@ class BridgeState:
         self.poll_transcript = ""
         self.poll_wav_duration = 0.0
         self.poll_ready_time = 0.0
-        # --- Pending commands for ESP32 (delivered via poll/health) ---
+        # --- Pending commands for this device (delivered via poll/health) ---
         self.pending_wifi_ssid = ""
         self.pending_wifi_password = ""
-        # --- Pending push notifications for ESP32 ---
-        self.pending_notifications: list = []  # list of {"text": str, "wav_url": str, "duration": float}
+        # --- Pending push notifications for this device ---
+        self.pending_notifications: list = []
+        # --- Timing ---
+        self.last_activity = time.time()
+        self.silence_timer = None
+
+
+# =============================================================================
+# Global State (shared across all devices)
+# =============================================================================
+class BridgeState:
+    def __init__(self):
+        self.esphome_client = None
+        self.esphome_services = {}
+        self.whisper_model = None
+        # Per-device state map: IP -> DeviceState
+        self.devices: dict[str, DeviceState] = {}
+
+    def get_device(self, ip: str) -> DeviceState:
+        """Get or create DeviceState for an IP address."""
+        if ip not in self.devices:
+            log.info(f"New device connected: {ip}")
+            self.devices[ip] = DeviceState(ip)
+        device = self.devices[ip]
+        device.last_activity = time.time()
+        return device
 
 state = BridgeState()
 
@@ -205,22 +228,22 @@ def transcribe_audio(audio_bytes: bytes) -> str:
         log.error(f"Transcription error: {e}")
         return ""
     finally:
-        import shutil; shutil.copy(tmp_path, "/tmp/aipi_debug_last.wav"); os.unlink(tmp_path)
+        import shutil; shutil.copy(tmp_path, "/tmp/walkieclaw_debug_last.wav"); os.unlink(tmp_path)
 
 
 # =============================================================================
 # OpenClaw Agent Communication
 # =============================================================================
-async def send_to_openclaw(text: str) -> str:
+async def send_to_openclaw(text: str, device_ip: str = "") -> str:
     if not text.strip():
         return "I didn't catch that. Could you say it again?"
 
     mode = CONFIG.get("OPENCLAW_MODE", "chat")
-    log.info(f"Sending to OpenClaw ({mode}): {text}")
+    log.info(f"Sending to OpenClaw ({mode}) [device={device_ip}]: {text}")
 
     try:
         if mode == "chat":
-            return await _openclaw_chat_completions(text)
+            return await _openclaw_chat_completions(text, device_ip)
         else:
             return await _openclaw_hooks_agent(text)
     except asyncio.TimeoutError:
@@ -231,23 +254,25 @@ async def send_to_openclaw(text: str) -> str:
         return "Sorry, I encountered an error."
 
 
-def _extract_tts_from_session() -> str:
+def _extract_tts_from_session(device_ip: str = "") -> str:
     """Extract TTS text from the most recent OpenClaw session log.
 
     When the agent uses a TTS tool call instead of plain text,
     the chat completions endpoint returns 'No response from OpenClaw.'
     This reads the session log to find the spoken text.
     """
-    import glob
     sessions_dir = Path.home() / ".openclaw" / "agents" / "main" / "sessions"
-    # Find the aipi-lite-voice session ID from sessions.json
     sessions_index = sessions_dir / "sessions.json"
     if not sessions_index.exists():
         return ""
     try:
         with open(sessions_index) as f:
             idx = json.load(f)
-        session_info = idx.get("agent:main:openai-user:aipi-lite-voice", {})
+        user_key = f"walkieclaw-{device_ip}" if device_ip else "walkieclaw"
+        session_info = idx.get(f"agent:main:openai-user:{user_key}", {})
+        if not session_info:
+            # Fallback to legacy key
+            session_info = idx.get("agent:main:openai-user:walkieclaw", {})
         sid = session_info.get("sessionId", "")
         if not sid:
             return ""
@@ -285,7 +310,7 @@ def _extract_tts_from_session() -> str:
         return ""
 
 
-async def _openclaw_chat_completions(text: str) -> str:
+async def _openclaw_chat_completions(text: str, device_ip: str = "") -> str:
     base_url = CONFIG["OPENCLAW_URL"].rstrip("/")
     url = f"{base_url}/v1/chat/completions"
 
@@ -297,9 +322,12 @@ async def _openclaw_chat_completions(text: str) -> str:
     agent_id = CONFIG.get("OPENCLAW_AGENT_ID", "main")
     model = f"openclaw:{agent_id}"
 
+    # Per-device user ID for separate conversation histories
+    user_id = f"walkieclaw-{device_ip}" if device_ip else "walkieclaw"
+
     payload = {
         "model": model,
-        "user": "aipi-lite-voice",
+        "user": user_id,
         "stream": False,
         "messages": [
             {"role": "user", "content": text}
@@ -322,13 +350,13 @@ async def _openclaw_chat_completions(text: str) -> str:
                     r"<think>.*?</think>", "", content, flags=re.DOTALL
                 ).strip()
                 # If gateway returned "No response" it may have used TTS tool
-                # instead of text — extract spoken text from session log
+                # instead of text -- extract spoken text from session log
                 if not content or content == "No response from OpenClaw.":
-                    tts_text = _extract_tts_from_session()
+                    tts_text = _extract_tts_from_session(device_ip)
                     if tts_text:
                         content = tts_text
                         log.info(f"Extracted TTS text: {content[:100]}...")
-                log.info(f"OpenClaw response: {content[:100]}...")
+                log.info(f"OpenClaw response [{user_id}]: {content[:100]}...")
                 return content or "I processed that but had nothing to say."
             else:
                 body = await resp.text()
@@ -347,8 +375,8 @@ async def _openclaw_hooks_agent(text: str) -> str:
 
     payload = {
         "message": text,
-        "name": "AIPI Voice",
-        "sessionKey": "hook:aipi-voice",
+        "name": "WalkieClaw Voice",
+        "sessionKey": "hook:walkieclaw-voice",
         "wakeMode": "now",
         "timeoutSeconds": 30,
     }
@@ -400,7 +428,6 @@ async def synthesize_speech(text: str) -> str:
 
     wav_path = _postprocess_audio(wav_path)
 
-    state.current_wav_path = wav_path
     log.info(f"TTS generated: {wav_path}")
     return wav_path
 
@@ -536,7 +563,6 @@ def _wav_duration(wav_path: str) -> float:
 class UDPAudioProtocol(asyncio.DatagramProtocol):
     def __init__(self):
         self.transport = None
-        self._silence_timer = None
 
     def connection_made(self, transport):
         self.transport = transport
@@ -544,9 +570,7 @@ class UDPAudioProtocol(asyncio.DatagramProtocol):
                  f"{CONFIG['UDP_LISTEN_HOST']}:{CONFIG['UDP_LISTEN_PORT']}")
 
     def datagram_received(self, data: bytes, addr):
-        # Block new audio while processing or while a ready response is pending
-        if state.is_processing or state.is_speaking or state.poll_status == "ready":
-            return
+        sender_ip = addr[0]
 
         # Handle markers
         if data.startswith(b'ESP_IP:'):
@@ -557,120 +581,133 @@ class UDPAudioProtocol(asyncio.DatagramProtocol):
                 if not state.esphome_client:
                     asyncio.ensure_future(init_esphome())
             return
+
         # Handle keyed START marker: START:<first_8_chars_of_api_key>
         if data.startswith(b'START'):
             api_key = CONFIG.get("BRIDGE_API_KEY", "")
             if api_key:
                 expected_prefix = f"START:{api_key[:8]}".encode()
                 if data == expected_prefix:
-                    _authenticated_udp_ips.add(addr[0])
-                    log.info(f"UDP authenticated START from {addr[0]}")
+                    _authenticated_udp_ips.add(sender_ip)
+                    log.info(f"UDP authenticated START from {sender_ip}")
                 elif data == b'START':
-                    log.warning(f"UDP rejected unauthenticated START from {addr[0]}")
+                    log.warning(f"UDP rejected unauthenticated START from {sender_ip}")
                     return
                 else:
-                    log.warning(f"UDP rejected bad START key from {addr[0]}")
+                    log.warning(f"UDP rejected bad START key from {sender_ip}")
                     return
             else:
                 # No key configured, accept plain START
-                _authenticated_udp_ips.add(addr[0])
-                log.debug(f"UDP marker: START from {addr[0]} (no auth)")
+                _authenticated_udp_ips.add(sender_ip)
+                log.debug(f"UDP marker: START from {sender_ip} (no auth)")
+            # Touch device state on START
+            state.get_device(sender_ip)
             return
+
         if data == b'STOP':
-            log.debug(f'UDP marker: STOP from {addr[0]}')
+            log.debug(f'UDP marker: STOP from {sender_ip}')
             return
 
         # Drop PCM data from unauthenticated IPs
         api_key = CONFIG.get("BRIDGE_API_KEY", "")
-        if api_key and addr[0] not in _authenticated_udp_ips:
+        if api_key and sender_ip not in _authenticated_udp_ips:
             return
 
-        state.is_listening = True
-        state.audio_buffer.extend(data)
-        state.last_activity = time.time()
+        # Get per-device state
+        device = state.get_device(sender_ip)
 
-        if self._silence_timer:
-            self._silence_timer.cancel()
+        # Block new audio only if THIS device is busy
+        if device.is_processing or device.poll_status == "ready":
+            return
+
+        device.audio_buffer.extend(data)
+
+        if device.silence_timer:
+            device.silence_timer.cancel()
 
         loop = asyncio.get_event_loop()
-        self._silence_timer = loop.call_later(
-            1.5, lambda: asyncio.ensure_future(self._process_buffer())
+        device.silence_timer = loop.call_later(
+            1.5, lambda ip=sender_ip: asyncio.ensure_future(_process_buffer(ip))
         )
 
-    async def _process_buffer(self):
-        if not state.audio_buffer or state.is_processing:
+    def connection_lost(self, exc):
+        log.info("UDP transport closed")
+
+
+async def _process_buffer(device_ip: str):
+    """Process audio buffer for a specific device."""
+    device = state.devices.get(device_ip)
+    if not device or not device.audio_buffer or device.is_processing:
+        return
+
+    device.is_processing = True
+    device.poll_status = "processing"
+    device.poll_stage = "transcribing"
+    audio_data = bytes(device.audio_buffer)
+    device.audio_buffer.clear()
+
+    # ESP32 I2S sends 32-bit samples; extract high 16-bit of each
+    if len(audio_data) >= 4:
+        n_samples_32 = len(audio_data) // 4
+        samples_32 = struct.unpack(f"<{n_samples_32}i", audio_data[:n_samples_32*4])
+        samples_16 = [((s >> 16) & 0xFFFF) for s in samples_32]
+        audio_data = struct.pack(f"<{len(samples_16)}h",
+            *[s if s < 32768 else s - 65536 for s in samples_16])
+
+    log.info(f"Processing {len(audio_data)} bytes of audio from {device_ip}...")
+
+    try:
+        # 1. Transcribe
+        device.poll_stage = "transcribing"
+        await command_update_display("WalkieClaw", "Transcribing...")
+        loop = asyncio.get_event_loop()
+        text = await loop.run_in_executor(None, transcribe_audio, audio_data)
+
+        if not text.strip():
+            log.info(f"No speech detected from {device_ip}, skipping.")
+            await command_update_display("WalkieClaw", "Ready", "")
+            device.is_processing = False
+            device.poll_status = "idle"
+            device.poll_stage = ""
             return
 
-        state.is_listening = False
-        state.is_processing = True
-        state.poll_status = "processing"
-        state.poll_stage = "transcribing"
-        audio_data = bytes(state.audio_buffer)
-        state.audio_buffer.clear()
+        device.poll_transcript = text
+        device.poll_stage = "thinking"
+        await command_update_display("WalkieClaw", "Thinking...", sanitize_for_display(f'"{text[:60]}"'))
 
-        # ESP32 I2S sends 32-bit samples; extract high 16-bit of each
-        if len(audio_data) >= 4:
-            n_samples_32 = len(audio_data) // 4
-            samples_32 = struct.unpack(f"<{n_samples_32}i", audio_data[:n_samples_32*4])
-            samples_16 = [((s >> 16) & 0xFFFF) for s in samples_32]
-            audio_data = struct.pack(f"<{len(samples_16)}h",
-                *[s if s < 32768 else s - 65536 for s in samples_16])
+        # 2. Send to OpenClaw (per-device user ID)
+        response = await send_to_openclaw(text, device_ip)
 
-        log.info(f"Processing {len(audio_data)} bytes of audio...")
+        # 3. Generate TTS
+        device.poll_stage = "speaking"
+        wav_path = await synthesize_speech(response)
 
-        try:
-            # 1. Transcribe
-            state.poll_stage = "transcribing"
-            await command_update_display("WalkieClaw", "Transcribing...")
-            loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, transcribe_audio, audio_data)
+        # 4. Update display (best-effort via ESPHome API)
+        await command_update_display("WalkieClaw", "Speaking...", sanitize_for_display(response[:200]))
 
-            if not text.strip():
-                log.info("No speech detected, skipping.")
-                await command_update_display("WalkieClaw", "Ready", "")
-                state.is_processing = False
-                state.poll_status = "idle"
-                state.poll_stage = ""
-                return
+        # 5. Store result for HTTP polling by this device
+        wav_url = _wav_url(wav_path)
+        duration = _wav_duration(wav_path)
+        device.poll_wav_url = wav_url
+        device.poll_text = sanitize_for_display(response[:200])
+        device.poll_wav_duration = duration
+        device.poll_status = "ready"
+        device.poll_ready_time = time.time()
+        log.info(f"Response ready for {device_ip}: {wav_url} ({duration:.1f}s)")
 
-            state.poll_transcript = text
-            state.poll_stage = "thinking"
-            await command_update_display("WalkieClaw", "Thinking...", sanitize_for_display(f'"{text[:60]}"'))
-
-            # 2. Send to OpenClaw
-            response = await send_to_openclaw(text)
-
-            # 3. Generate TTS
-            state.poll_stage = "speaking"
-            wav_path = await synthesize_speech(response)
-
-            # 4. Update display (best-effort via ESPHome API)
-            await command_update_display("WalkieClaw", "Speaking...", sanitize_for_display(response[:200]))
-
-            # 5. Store result for HTTP polling (instead of ESPHome push)
-            wav_url = _wav_url(wav_path)
-            duration = _wav_duration(wav_path)
-            state.poll_wav_url = wav_url
-            state.poll_text = sanitize_for_display(response[:200])
-            state.poll_wav_duration = duration
-            state.poll_status = "ready"
-            state.poll_ready_time = time.time()
-            log.info(f"Response ready for poll: {wav_url} ({duration:.1f}s)")
-
-        except Exception as e:
-            log.error(f"Pipeline error: {e}", exc_info=True)
-            state.poll_status = "idle"
-            state.poll_stage = ""
-        finally:
-            state.is_processing = False
-            state.is_speaking = False
+    except Exception as e:
+        log.error(f"Pipeline error for {device_ip}: {e}", exc_info=True)
+        device.poll_status = "idle"
+        device.poll_stage = ""
+    finally:
+        device.is_processing = False
 
 
 # =============================================================================
 # HTTP Server
 # =============================================================================
 async def handle_audio_request(request: web.Request) -> web.Response:
-    # No API key check — media_player can't send custom headers.
+    # No API key check -- media_player can't send custom headers.
     # WAV filenames contain hash+timestamp so they're unguessable.
     filename = request.match_info.get("filename", "")
     filepath = os.path.join(CONFIG["AUDIO_DIR"], filename)
@@ -694,28 +731,30 @@ async def handle_audio_request(request: web.Request) -> web.Response:
 async def handle_health(request: web.Request) -> web.Response:
     if not _check_api_key(request):
         return web.Response(status=401, text="Unauthorized")
+    device_ip = request.remote or "unknown"
+    device = state.get_device(device_ip)
     resp = {
         "status": "ok",
-        "listening": state.is_listening,
-        "processing": state.is_processing,
-        "speaking": state.is_speaking,
-        "poll_status": state.poll_status,
-        "uptime": time.time() - state.last_activity,
+        "device": device_ip,
+        "processing": device.is_processing,
+        "poll_status": device.poll_status,
+        "uptime": time.time() - device.last_activity,
+        "connected_devices": len(state.devices),
     }
-    # Deliver pending WiFi command if any
-    if state.pending_wifi_ssid:
-        resp["wifi_ssid"] = state.pending_wifi_ssid
-        resp["wifi_password"] = state.pending_wifi_password
-        log.info(f"Delivering WiFi command via health: SSID={state.pending_wifi_ssid}")
-        state.pending_wifi_ssid = ""
-        state.pending_wifi_password = ""
-    # Deliver pending push notification if any
-    if state.pending_notifications and not state.is_processing and state.poll_status == "idle":
-        notif = state.pending_notifications.pop(0)
+    # Deliver pending WiFi command for this device
+    if device.pending_wifi_ssid:
+        resp["wifi_ssid"] = device.pending_wifi_ssid
+        resp["wifi_password"] = device.pending_wifi_password
+        log.info(f"Delivering WiFi command to {device_ip}: SSID={device.pending_wifi_ssid}")
+        device.pending_wifi_ssid = ""
+        device.pending_wifi_password = ""
+    # Deliver pending push notification for this device
+    if device.pending_notifications and not device.is_processing and device.poll_status == "idle":
+        notif = device.pending_notifications.pop(0)
         resp["notify_text"] = notif["text"]
         resp["notify_wav_url"] = notif["wav_url"]
         resp["notify_duration"] = notif["duration"]
-        log.info(f"Delivering push notification via health: {notif['text'][:60]}")
+        log.info(f"Delivering notification to {device_ip}: {notif['text'][:60]}")
     return web.json_response(resp)
 
 
@@ -726,40 +765,43 @@ async def handle_poll_response(request: web.Request) -> web.Response:
     ip = request.remote or "unknown"
     if not _rate_limit_ok(ip):
         return web.Response(status=429, text="Too many requests")
-    if state.poll_status == "idle":
+
+    device = state.get_device(ip)
+
+    if device.poll_status == "idle":
         return web.json_response({"status": "idle"})
-    elif state.poll_status == "processing":
+    elif device.poll_status == "processing":
         resp = {
             "status": "processing",
-            "stage": state.poll_stage,
+            "stage": device.poll_stage,
         }
-        if state.poll_transcript:
-            resp["transcript"] = state.poll_transcript
+        if device.poll_transcript:
+            resp["transcript"] = device.poll_transcript
         return web.json_response(resp)
-    elif state.poll_status == "ready":
+    elif device.poll_status == "ready":
         result = {
             "status": "ready",
-            "wav_url": state.poll_wav_url,
-            "text": state.poll_text,
-            "transcript": state.poll_transcript,
-            "duration": round(state.poll_wav_duration, 1),
+            "wav_url": device.poll_wav_url,
+            "text": device.poll_text,
+            "transcript": device.poll_transcript,
+            "duration": round(device.poll_wav_duration, 1),
         }
         # Auto-acknowledge: transition back to idle
-        state.poll_status = "idle"
-        state.poll_stage = ""
-        state.poll_wav_url = ""
-        state.poll_text = ""
-        state.poll_transcript = ""
-        state.poll_wav_duration = 0.0
-        state.poll_ready_time = 0.0
-        log.info("Poll response served and acknowledged")
+        device.poll_status = "idle"
+        device.poll_stage = ""
+        device.poll_wav_url = ""
+        device.poll_text = ""
+        device.poll_transcript = ""
+        device.poll_wav_duration = 0.0
+        device.poll_ready_time = 0.0
+        log.info(f"Poll response served to {ip} and acknowledged")
         return web.json_response(result)
     else:
         return web.json_response({"status": "idle"})
 
 
 async def handle_notify(request: web.Request) -> web.Response:
-    """Queue a push notification for the ESP32 (TTS generated immediately)."""
+    """Queue a push notification. Optional 'device' field targets one device; omit to broadcast."""
     if not _check_api_key(request):
         return web.Response(status=401, text="Unauthorized")
     try:
@@ -768,35 +810,53 @@ async def handle_notify(request: web.Request) -> web.Response:
         if not text:
             return web.json_response({"error": "text is required"}, status=400)
 
-        # Sanitize for display
+        target_ip = data.get("device", "").strip()
         display_text = sanitize_for_display(text[:200])
 
-        # Generate TTS immediately
+        # Generate TTS once
         log.info(f"Generating push notification TTS: {text[:60]}...")
         wav_path = await synthesize_speech(text)
         wav_url = _wav_url(wav_path)
         duration = _wav_duration(wav_path)
 
-        state.pending_notifications.append({
+        notif = {
             "text": display_text,
             "wav_url": wav_url,
             "duration": round(duration, 1),
-        })
-        log.info(f"Push notification queued ({len(state.pending_notifications)} pending)")
+        }
 
-        return web.json_response({
-            "status": "queued",
-            "text": display_text,
-            "pending": len(state.pending_notifications),
-            "message": "Notification queued. ESP32 will pick it up within 30s.",
-        })
+        if target_ip:
+            # Target specific device
+            device = state.get_device(target_ip)
+            device.pending_notifications.append(notif)
+            log.info(f"Notification queued for {target_ip} ({len(device.pending_notifications)} pending)")
+            return web.json_response({
+                "status": "queued",
+                "device": target_ip,
+                "text": display_text,
+                "pending": len(device.pending_notifications),
+                "message": "Notification queued. Device will pick it up within 30s.",
+            })
+        else:
+            # Broadcast to all known devices
+            count = 0
+            for ip, dev in state.devices.items():
+                dev.pending_notifications.append(dict(notif))
+                count += 1
+            log.info(f"Notification broadcast to {count} device(s)")
+            return web.json_response({
+                "status": "broadcast",
+                "text": display_text,
+                "devices": count,
+                "message": f"Notification broadcast to {count} device(s). Each will pick it up within 30s.",
+            })
     except Exception as e:
         log.error(f"notify error: {e}", exc_info=True)
         return web.json_response({"error": str(e)}, status=500)
 
 
 async def handle_connect_wifi(request: web.Request) -> web.Response:
-    """Queue a WiFi command for the ESP32 to pick up on next health poll."""
+    """Queue a WiFi command. Optional 'device' field targets one device; omit to broadcast."""
     if not _check_api_key(request):
         return web.Response(status=401, text="Unauthorized")
     try:
@@ -807,24 +867,58 @@ async def handle_connect_wifi(request: web.Request) -> web.Response:
         if not ssid:
             return web.json_response({"error": "ssid is required"}, status=400)
 
-        state.pending_wifi_ssid = ssid
-        state.pending_wifi_password = password
-        log.info(f"Queued WiFi command: SSID={ssid} (will deliver on next ESP32 health poll)")
+        target_ip = data.get("device", "").strip()
 
-        return web.json_response({
-            "status": "queued",
-            "ssid": ssid,
-            "message": f"WiFi command queued. ESP32 will pick it up within 30s.",
-        })
+        if target_ip:
+            device = state.get_device(target_ip)
+            device.pending_wifi_ssid = ssid
+            device.pending_wifi_password = password
+            log.info(f"Queued WiFi command for {target_ip}: SSID={ssid}")
+            return web.json_response({
+                "status": "queued",
+                "device": target_ip,
+                "ssid": ssid,
+                "message": f"WiFi command queued for {target_ip}. Will deliver within 30s.",
+            })
+        else:
+            count = 0
+            for ip, dev in state.devices.items():
+                dev.pending_wifi_ssid = ssid
+                dev.pending_wifi_password = password
+                count += 1
+            log.info(f"WiFi command broadcast to {count} device(s): SSID={ssid}")
+            return web.json_response({
+                "status": "broadcast",
+                "ssid": ssid,
+                "devices": count,
+                "message": f"WiFi command broadcast to {count} device(s). Each will pick up within 30s.",
+            })
     except Exception as e:
         log.error(f"connect_wifi error: {e}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_devices(request: web.Request) -> web.Response:
+    """List connected devices and their status."""
+    if not _check_api_key(request):
+        return web.Response(status=401, text="Unauthorized")
+    devices = []
+    for ip, device in state.devices.items():
+        devices.append({
+            "ip": ip,
+            "poll_status": device.poll_status,
+            "is_processing": device.is_processing,
+            "last_activity": round(time.time() - device.last_activity, 1),
+            "pending_notifications": len(device.pending_notifications),
+        })
+    return web.json_response({"devices": devices, "count": len(devices)})
 
 
 def create_http_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/health", handle_health)
     app.router.add_get("/api/response", handle_poll_response)
+    app.router.add_get("/api/devices", handle_devices)
     app.router.add_get("/audio/{filename}", handle_audio_request)
     app.router.add_post("/api/connect_wifi", handle_connect_wifi)
     app.router.add_post("/api/notify", handle_notify)
@@ -910,20 +1004,34 @@ async def cleanup_audio_files():
                 pass
 
 
-async def stale_poll_cleanup():
-    """Reset poll state if a ready response sits uncollected for 60s."""
+async def stale_cleanup():
+    """Reset stale poll state and remove inactive devices."""
     while True:
         await asyncio.sleep(10)
-        if state.poll_status == "ready" and state.poll_ready_time > 0:
-            if time.time() - state.poll_ready_time > 60:
-                log.warning("Stale poll response (>60s), resetting to idle")
-                state.poll_status = "idle"
-                state.poll_stage = ""
-                state.poll_wav_url = ""
-                state.poll_text = ""
-                state.poll_transcript = ""
-                state.poll_wav_duration = 0.0
-                state.poll_ready_time = 0.0
+        now = time.time()
+        stale_ips = []
+        for ip, device in state.devices.items():
+            # Reset stale ready responses (>60s uncollected)
+            if device.poll_status == "ready" and device.poll_ready_time > 0:
+                if now - device.poll_ready_time > 60:
+                    log.warning(f"Stale poll response for {ip} (>60s), resetting to idle")
+                    device.poll_status = "idle"
+                    device.poll_stage = ""
+                    device.poll_wav_url = ""
+                    device.poll_text = ""
+                    device.poll_transcript = ""
+                    device.poll_wav_duration = 0.0
+                    device.poll_ready_time = 0.0
+            # Mark devices inactive for 10+ minutes for removal
+            if (now - device.last_activity > 600
+                    and not device.is_processing
+                    and device.poll_status == "idle"
+                    and not device.pending_notifications):
+                stale_ips.append(ip)
+        for ip in stale_ips:
+            log.info(f"Removing stale device: {ip} (inactive >10min)")
+            del state.devices[ip]
+            _authenticated_udp_ips.discard(ip)
 
 
 async def esphome_reconnect_loop():
@@ -950,7 +1058,7 @@ async def esphome_reconnect_loop():
 # =============================================================================
 async def main():
     log.info("=" * 60)
-    log.info("  AIPI Lite -> OpenClaw VPS Voice Bridge (HTTP Poll)")
+    log.info("  WalkieClaw Voice Bridge (Multi-Device)")
     log.info("=" * 60)
     log.info(f"  UDP listener:  {CONFIG['UDP_LISTEN_HOST']}:{CONFIG['UDP_LISTEN_PORT']}")
     log.info(f"  HTTP server:   {CONFIG['HTTP_HOST']}:{CONFIG['HTTP_PORT']}")
@@ -958,6 +1066,7 @@ async def main():
     log.info(f"  STT engine:    faster-whisper ({CONFIG['WHISPER_MODEL']})")
     log.info(f"  TTS engine:    {CONFIG['TTS_ENGINE']}")
     log.info(f"  Poll endpoint: GET /api/response")
+    log.info(f"  Devices:       GET /api/devices")
     log.info("=" * 60)
 
     os.makedirs(CONFIG["AUDIO_DIR"], exist_ok=True)
@@ -965,7 +1074,7 @@ async def main():
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, init_whisper)
 
-    # ESPHome connect (best-effort — voice pipeline works without it)
+    # ESPHome connect (best-effort -- voice pipeline works without it)
     await init_esphome()
 
     transport, protocol = await loop.create_datagram_endpoint(
@@ -980,7 +1089,7 @@ async def main():
     await site.start()
 
     asyncio.create_task(cleanup_audio_files())
-    asyncio.create_task(stale_poll_cleanup())
+    asyncio.create_task(stale_cleanup())
     asyncio.create_task(esphome_reconnect_loop())
 
     log.info("Bridge is running! Press Ctrl+C to stop.")

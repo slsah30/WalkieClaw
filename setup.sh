@@ -53,8 +53,8 @@ cat << 'VPS_SETUP'
 === VPS MODE (bridge.py on remote server) ===
 
 1. On VPS, create project directory:
-   mkdir -p /opt/aipi-openclaw-bridge
-   cd /opt/aipi-openclaw-bridge
+   mkdir -p /opt/walkieclaw-bridge
+   cd /opt/walkieclaw-bridge
 
 2. Copy project files (bridge.py, requirements.txt) to VPS
 
@@ -76,7 +76,7 @@ cat << 'VPS_SETUP'
 
 6. Create systemd service:
 
-   cat > /etc/systemd/system/aipi-bridge.service << 'EOF'
+   cat > /etc/systemd/system/walkieclaw-bridge.service << 'EOF'
 [Unit]
 Description=WalkieClaw Voice Bridge
 After=network.target
@@ -84,9 +84,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/aipi-openclaw-bridge
-EnvironmentFile=/opt/aipi-openclaw-bridge/.env
-ExecStart=/opt/aipi-openclaw-bridge/venv/bin/python3 bridge.py
+WorkingDirectory=/opt/walkieclaw-bridge
+EnvironmentFile=/opt/walkieclaw-bridge/.env
+ExecStart=/opt/walkieclaw-bridge/venv/bin/python3 bridge.py
 Restart=always
 RestartSec=5
 
@@ -95,7 +95,7 @@ WantedBy=multi-user.target
 EOF
 
    systemctl daemon-reload
-   systemctl enable --now aipi-bridge
+   systemctl enable --now walkieclaw-bridge
 
 VPS_SETUP
 
@@ -117,15 +117,15 @@ cat << 'FLASH_COMMANDS'
    cp secrets.yaml.example secrets.yaml
    # Edit secrets.yaml — fill in WiFi, API key, etc.
 
-4. Edit aipi-openclaw-direct.yaml:
+4. Edit walkieclaw.yaml:
    # Set bridge_host to your VPS IP or local PC LAN IP
    # Set the keyed_start prefix to first 8 chars of your bridge_api_key
 
 5. Flash:
-   esphome run aipi-openclaw-direct.yaml
+   esphome run walkieclaw.yaml
 
 6. Watch logs to verify:
-   esphome logs aipi-openclaw-direct.yaml
+   esphome logs walkieclaw.yaml
 
 FLASH_COMMANDS
 

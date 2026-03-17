@@ -1,0 +1,36 @@
+{
+  "name": "walkieclaw-bridge",
+  "version": "0.1.0",
+  "description": "Voice bridge for WalkieClaw — connects your ESP32 device to an AI agent",
+  "bin": {
+    "walkieclaw-bridge": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["walkieclaw", "voice", "esp32", "whisper", "tts", "ai"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slsah30/WalkieClaw.git",
+    "directory": "walkieclaw-bridge"
+  },
+  "dependencies": {
+    "smart-whisper": "^0.4.0",
+    "@andresaya/edge-tts": "^1.0.0",
+    "fastify": "^5.0.0",
+    "@fastify/static": "^8.0.0",
+    "@fastify/rate-limit": "^10.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "type": "module"
+}

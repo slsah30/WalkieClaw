@@ -1,8 +1,8 @@
 # =============================================================================
 # AIPI Lite - WalkieClaw Voice Terminal (LEGACY — UDP relay mode)
 # =============================================================================
-# This config uses the MSI UDP relay (upd_relay.py) to forward audio to VPS.
-# For the current direct-to-bridge approach, use aipi-openclaw-direct.yaml.
+# This config uses the MSI UDP relay (udp_relay.py) to forward audio to VPS.
+# For the current direct-to-bridge approach, use walkieclaw.yaml.
 #
 # Framework: ESP-IDF (required for octal PSRAM, better audio stability)
 #
@@ -22,7 +22,7 @@
 # =============================================================================
 
 substitutions:
-  device_name: "aipi-openclaw"
+  device_name: "walkieclaw-relay"
   friendly_name: "WalkieClaw"
   bridge_host: "<YOUR_RELAY_PC_LAN_IP>"
   bridge_udp_port: "12345"
