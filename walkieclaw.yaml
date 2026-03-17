@@ -635,9 +635,19 @@ binary_sensor:
             lv_obj_invalidate(id(lbl_action));
             return;
           }
-          if (id(voice_state) != 0) {
-            ESP_LOGW("btn", "Ignoring press, voice_state=%d", id(voice_state));
+          int vs = id(voice_state);
+          if (vs == 1) {
+            ESP_LOGW("btn", "Already recording");
             return;
+          }
+          // Interrupt playback/processing — stop everything and start recording
+          if (vs == 3 || vs == 4) {
+            ESP_LOGI("btn", "Interrupting playback");
+            id(openclaw_player).make_call().set_command(media_player::MediaPlayerCommand::MEDIA_PLAYER_COMMAND_STOP).perform();
+            id(play_response).stop();
+          }
+          if (vs == 2) {
+            ESP_LOGI("btn", "Interrupting processing");
           }
           id(voice_state) = 1;  // RECORDING
       - if:

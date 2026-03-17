@@ -1,43 +1,47 @@
 # WalkieClaw Bridge
 
-Voice bridge that connects WalkieClaw hardware (ESP32-S3) to an [OpenClaw](https://github.com/AiPi-Inc/openclaw) AI agent. Press a button, speak, get a response through the speaker.
+Voice bridge that connects WalkieClaw hardware (ESP32-S3) to your [OpenClaw](https://github.com/openclaw) AI agent. Press a button, speak, get a spoken response.
 
 ```
-ESP32 mic --> UDP audio --> Bridge --> Whisper STT --> OpenClaw Agent --> Edge TTS --> WAV --> ESP32 speaker
+ESP32 mic --> UDP audio --> Bridge --> GPU Whisper STT --> OpenClaw Agent --> Edge TTS --> WAV --> ESP32 speaker
+                                         (~0.5s)            (~2-3s)          (~0.5s)
 ```
+
+**Total response time: ~3-4 seconds.**
 
 ## Prerequisites
-
-Install these before running the bridge:
 
 ### 1. Node.js (v18+)
 ```bash
 node --version  # must be 18.0.0 or higher
 ```
 
-### 2. ffmpeg
-Required to convert TTS audio (MP3) to WAV for the ESP32 speaker.
-
+### 2. Python 3.10+ with faster-whisper (for GPU speech recognition)
 ```bash
-# Windows
-winget install ffmpeg
-
-# macOS
-brew install ffmpeg
-
-# Ubuntu/Debian
-sudo apt install ffmpeg
+pip install faster-whisper
 ```
 
-After installing, **restart your terminal** so `ffmpeg` is on your PATH.
+If you have an NVIDIA GPU, this gives you sub-second speech-to-text. Without it, the bridge falls back to CPU-based whisper (slower but still works).
 
 ### 3. OpenClaw
 The AI agent framework that provides the brains.
 
 ```bash
 npm install -g openclaw
-openclaw configure          # Set up your API provider key (e.g. OpenRouter)
+openclaw configure          # Set up your model provider
 openclaw config set gateway.mode local
+```
+
+**Important:** Enable the chat completions API. Add this to `~/.openclaw/openclaw.json` inside the `"gateway"` section:
+
+```json
+"http": {
+  "endpoints": {
+    "chatCompletions": {
+      "enabled": true
+    }
+  }
+}
 ```
 
 ## Quick Start
@@ -46,16 +50,15 @@ openclaw config set gateway.mode local
 # Install globally
 npm install -g walkieclaw-bridge
 
-# Terminal 1: Start OpenClaw gateway
-openclaw gateway --port 18789
-
-# Terminal 2: Start the bridge
+# Start the bridge (auto-starts OpenClaw gateway + whisper server)
 walkieclaw-bridge
 ```
 
 On first run, the bridge will:
 - Auto-generate an API key
-- Download the Whisper speech recognition model (~150MB)
+- Start the OpenClaw gateway (if not already running)
+- Start the GPU whisper server (if faster-whisper is installed)
+- Download the Whisper speech model on first transcription (~150MB, cached after)
 - Print a banner with your Bridge Host IP and API Key
 
 ### Connect Your Device
@@ -66,6 +69,17 @@ On first run, the bridge will:
 4. Enter the **Bridge Host** (your computer's LAN IP, shown in the bridge banner)
 5. Enter the **API Key** (shown in the bridge banner)
 6. Press the button on the device and talk!
+
+## What the Bridge Auto-Manages
+
+The bridge starts and manages two child processes automatically:
+
+| Process | What | Port | Restart |
+|---------|------|------|---------|
+| **OpenClaw Gateway** | Your AI agent | :18789 | Auto-restart on crash |
+| **Whisper GPU Server** | Speech-to-text | :8787 | Auto-restart on crash |
+
+Both run hidden (no visible windows). Both stop when the bridge stops. If either is already running externally, the bridge detects it and skips launching its own.
 
 ## CLI Options
 
@@ -78,7 +92,7 @@ Options:
   --model <name>          Whisper model (default: base)
   --port <port>           HTTP port (default: 8080)
   --udp-port <port>       UDP port (default: 12345)
-  --openclaw-url <url>    OpenClaw URL (default: http://127.0.0.1:18789)
+  --openclaw-url <url>    OpenClaw gateway URL (default: http://127.0.0.1:18789)
   --voice <voice>         Edge TTS voice (default: en-GB-RyanNeural)
   --api-key <key>         Set API key (auto-generated if not set)
   --advertise-host <ip>   IP to advertise in WAV URLs
@@ -89,10 +103,12 @@ Options:
 
 1. **Button press** on ESP32 starts recording from the onboard microphone
 2. **UDP audio** streams raw I2S audio to the bridge on port 12345
-3. **Whisper** transcribes the audio to text (runs locally via smart-whisper)
-4. **OpenClaw** processes the text through your configured AI agent
-5. **Edge TTS** converts the agent's response to speech (MP3 -> WAV via ffmpeg)
-6. **HTTP polling** - the ESP32 picks up the audio URL and plays it through the speaker
+3. **faster-whisper** on GPU transcribes the audio to text (~0.5 seconds)
+4. **OpenClaw** processes the text through your AI agent via `/v1/chat/completions` (~2-3 seconds)
+5. **Edge TTS** converts the response to speech, decoded in-process via WASM (~0.5 seconds)
+6. **HTTP polling** — the ESP32 picks up the audio URL and plays it through the speaker
+
+No subprocesses are spawned per request. No ffmpeg needed. No visible windows.
 
 ## Configuration
 
@@ -138,19 +154,22 @@ All endpoints except `/audio/*` require an `X-API-Key` header.
 ## Troubleshooting
 
 **Bridge shows wrong IP address:**
-The bridge filters out VPN, VirtualBox, Docker, and WSL adapters. Use `--advertise-host <ip>` to override.
+Use `--advertise-host <ip>` to override. The bridge filters out VPN, VirtualBox, Docker, and WSL adapters.
 
-**"ffmpeg conversion failed":**
-Install ffmpeg and restart your terminal. The bridge falls back to silence if ffmpeg is missing.
+**"Whisper server not reachable":**
+Make sure Python and faster-whisper are installed: `pip install faster-whisper`. The bridge will auto-start the whisper server if it finds `whisper-server.py`.
 
 **ESP32 gets 401 errors:**
 Make sure the API key on the device matches the bridge. Visit `http://<device-ip>/` to update it.
 
 **Port 8080 already in use:**
-The bridge auto-increments to find a free port, but the ESP32 firmware expects port 8080. Kill whatever is using 8080, or reflash with a different port.
+The bridge auto-increments to find a free port, but the ESP32 firmware expects 8080. Kill whatever is using 8080, or use `--port <other>` and reflash.
 
-**OpenClaw not responding:**
-Make sure the gateway is running: `openclaw gateway --port 18789`
+**OpenClaw gateway not starting:**
+Make sure OpenClaw is installed (`npm install -g openclaw`) and configured (`openclaw configure`). Check that `chatCompletions` is enabled in `~/.openclaw/openclaw.json`.
+
+**Slow transcription (30+ seconds):**
+You're probably running CPU-only whisper. Install `faster-whisper` with CUDA support for sub-second GPU transcription. Requires an NVIDIA GPU with CUDA toolkit.
 
 ## License
 

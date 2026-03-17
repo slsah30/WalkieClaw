@@ -2,8 +2,9 @@
 
 import { readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "fs";
 import { join, dirname } from "path";
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { fileURLToPath } from "url";
+import { spawn, type ChildProcess } from "child_process";
 import {
   buildConfig,
   isFirstRun,
@@ -18,7 +19,7 @@ import {
 import { DeviceManager } from "./devices.js";
 import { initWhisper, transcribe } from "./whisper.js";
 import { synthesizeSpeech, getWavUrl } from "./tts.js";
-import { sendToOpenclaw } from "./openclaw.js";
+import { sendToOpenclaw, initOpenclaw } from "./openclaw.js";
 import { i2sTo16bitPcm, getWavDuration } from "./audio.js";
 import { sanitizeForDisplay, stripMarkdown } from "./utils.js";
 import { createUdpListener } from "./udp.js";
@@ -207,6 +208,177 @@ async function processAudio(
 }
 
 // ---------------------------------------------------------------------------
+// GPU Whisper Server (auto-managed child process)
+// ---------------------------------------------------------------------------
+const WHISPER_PORT = parseInt(process.env.WHISPER_PORT ?? "8787");
+
+async function startWhisperServer(config: BridgeConfig): Promise<ChildProcess | null> {
+  // Find whisper-server.py relative to this package
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const scriptPaths = [
+    join(__dirname, "..", "whisper-server.py"),          // dev: dist/../whisper-server.py
+    join(__dirname, "..", "..", "whisper-server.py"),     // installed: node_modules/walkieclaw-bridge/../../whisper-server.py
+  ];
+
+  const script = scriptPaths.find(p => existsSync(p));
+  if (!script) {
+    console.warn("[whisper] whisper-server.py not found — using external whisper server");
+    return null;
+  }
+
+  // Check if whisper server is already running
+  try {
+    const resp = await fetch(`http://127.0.0.1:${WHISPER_PORT}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "audio/pcm" },
+      body: new Uint8Array(3200),
+    });
+    if (resp.ok) {
+      console.log("[whisper] GPU server already running on :" + WHISPER_PORT);
+      return null;
+    }
+  } catch {
+    // Not running — we'll start it
+  }
+
+  // Find python
+  const pythonCandidates = platform() === "win32"
+    ? ["python", "python3", join(homedir(), "AppData", "Local", "Programs", "Miniconda3", "python.exe")]
+    : ["python3", "python"];
+
+  let pythonPath = "python";
+  for (const p of pythonCandidates) {
+    try {
+      const test = spawn(p, ["--version"], { stdio: "pipe", windowsHide: true });
+      await new Promise<void>((resolve) => {
+        test.on("close", (code) => { if (code === 0) pythonPath = p; resolve(); });
+        test.on("error", () => resolve());
+      });
+      if (pythonPath === p) break;
+    } catch {}
+  }
+
+  console.log(`[whisper] Starting GPU server: ${pythonPath} ${script}`);
+  const proc = spawn(pythonPath, [
+    script,
+    "--model", config.whisperModel,
+    "--port", String(WHISPER_PORT),
+    "--device", "cuda",
+  ], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  proc.stdout?.on("data", (d: Buffer) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[whisper-gpu] ${line}`);
+  });
+  proc.stderr?.on("data", (d: Buffer) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[whisper-gpu] ${line}`);
+  });
+  proc.on("exit", (code) => {
+    console.error(`[whisper-gpu] Process exited (code ${code}), restarting in 3s...`);
+    setTimeout(() => {
+      startWhisperServer(config).catch(() => {});
+    }, 3000);
+  });
+
+  // Wait for server to become ready
+  console.log("[whisper] Waiting for GPU model to load...");
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const resp = await fetch(`http://127.0.0.1:${WHISPER_PORT}/transcribe`, {
+        method: "POST",
+        headers: { "Content-Type": "audio/pcm" },
+        body: new Uint8Array(3200),
+      });
+      if (resp.ok) {
+        console.log("[whisper] GPU server ready.");
+        return proc;
+      }
+    } catch {}
+  }
+
+  console.error("[whisper] GPU server failed to start within 60s");
+  return proc;
+}
+
+// ---------------------------------------------------------------------------
+// OpenClaw Gateway (auto-managed child process)
+// ---------------------------------------------------------------------------
+async function startGateway(config: BridgeConfig): Promise<ChildProcess | null> {
+  const gatewayUrl = config.openclawUrl.replace(/\/+$/, "");
+  const port = new URL(gatewayUrl).port || "18789";
+
+  // Check if gateway is already running
+  try {
+    const resp = await fetch(`${gatewayUrl}/health`);
+    if (resp.ok) {
+      console.log(`[gateway] OpenClaw gateway already running on :${port}`);
+      return null;
+    }
+  } catch {
+    // Not running — start it
+  }
+
+  // Find openclaw.mjs
+  const npmGlobal = join(homedir(), "AppData", "Roaming", "npm");
+  const candidates = [
+    join(npmGlobal, "node_modules", "openclaw", "openclaw.mjs"),
+    "/usr/local/lib/node_modules/openclaw/openclaw.mjs",
+    "/usr/lib/node_modules/openclaw/openclaw.mjs",
+  ];
+  const script = candidates.find(p => existsSync(p));
+
+  if (!script) {
+    console.warn("[gateway] OpenClaw not found. Install with: npm install -g openclaw");
+    return null;
+  }
+
+  console.log(`[gateway] Starting OpenClaw gateway on :${port}...`);
+  const proc = spawn(process.execPath, [script, "gateway", "--port", port], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  proc.stdout?.on("data", (d: Buffer) => {
+    const line = d.toString().trim();
+    if (line) console.log(`[gateway] ${line}`);
+  });
+  proc.stderr?.on("data", (d: Buffer) => {
+    // Gateway logs go to stderr — filter noise
+    const line = d.toString().trim();
+    if (line && !line.includes("ExperimentalWarning")) {
+      console.log(`[gateway] ${line}`);
+    }
+  });
+  proc.on("exit", (code) => {
+    console.error(`[gateway] Process exited (code ${code}), restarting in 3s...`);
+    setTimeout(() => {
+      startGateway(config).catch(() => {});
+    }, 3000);
+  });
+
+  // Wait for it to become ready
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const resp = await fetch(`${gatewayUrl}/health`);
+      if (resp.ok) {
+        console.log("[gateway] OpenClaw gateway ready.");
+        return proc;
+      }
+    } catch {}
+  }
+
+  console.warn("[gateway] Gateway did not become ready within 30s");
+  return proc;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 async function main(): Promise<void> {
@@ -252,9 +424,17 @@ async function main(): Promise<void> {
 
   printBanner(config);
 
-  // Initialize Whisper
-  console.log("[init] Loading Whisper model (this may download on first run)...");
+  // Start OpenClaw gateway (auto-managed, hidden)
+  const gatewayProc = await startGateway(config);
+
+  // Start GPU whisper server (auto-managed, hidden)
+  const whisperProc = await startWhisperServer(config);
+
+  // Initialize Whisper client
   await initWhisper(config.whisperModel);
+
+  // Initialize OpenClaw connection
+  await initOpenclaw(config);
 
   // Create device manager
   const devices = new DeviceManager();
@@ -286,15 +466,21 @@ async function main(): Promise<void> {
 
   console.log("[init] Bridge is running! Press Ctrl+C to stop.\n");
 
-  // Graceful shutdown
-  process.on("SIGINT", () => {
+  // Graceful shutdown — kill child processes
+  const shutdown = () => {
     console.log("\n[shutdown] Shutting down...");
+    if (whisperProc && !whisperProc.killed) {
+      whisperProc.kill();
+      console.log("[shutdown] Whisper server stopped.");
+    }
+    if (gatewayProc && !gatewayProc.killed) {
+      gatewayProc.kill();
+      console.log("[shutdown] OpenClaw gateway stopped.");
+    }
     process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    console.log("\n[shutdown] Shutting down...");
-    process.exit(0);
-  });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 main().catch((err) => {

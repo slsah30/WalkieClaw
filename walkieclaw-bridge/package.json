@@ -14,7 +14,14 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["walkieclaw", "voice", "esp32", "whisper", "tts", "ai"],
+  "keywords": [
+    "walkieclaw",
+    "voice",
+    "esp32",
+    "whisper",
+    "tts",
+    "ai"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -22,15 +29,18 @@
     "directory": "walkieclaw-bridge"
   },
   "dependencies": {
-    "smart-whisper": "^0.4.0",
     "@andresaya/edge-tts": "^1.0.0",
-    "fastify": "^5.0.0",
+    "@fastify/rate-limit": "^10.0.0",
     "@fastify/static": "^8.0.0",
-    "@fastify/rate-limit": "^10.0.0"
+    "fastify": "^5.0.0",
+    "mpg123-decoder": "^1.0.3",
+    "smart-whisper": "^0.4.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.7.0"
   },
   "type": "module"
 }

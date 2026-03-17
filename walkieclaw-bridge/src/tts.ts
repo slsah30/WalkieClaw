@@ -1,11 +1,12 @@
 import { join } from "path";
-import { writeFileSync, readFileSync, unlinkSync } from "fs";
+import { writeFileSync } from "fs";
 import { createHash } from "crypto";
-import { postprocessAudio, resample, extractPcmFromWav, pcmToWav } from "./audio.js";
+import { postprocessAudio, pcmToWav, resample } from "./audio.js";
 import { getLocalIP, type BridgeConfig } from "./config.js";
 
 /**
  * Synthesize speech from text and return the path to the WAV file.
+ * No ffmpeg needed — uses WASM MP3 decoder.
  */
 export async function synthesizeSpeech(
   text: string,
@@ -16,74 +17,44 @@ export async function synthesizeSpeech(
   const filename = `tts_${textHash}_${timestamp}.wav`;
   const wavPath = join(config.audioDir, filename);
 
-  await edgeTts(text, wavPath, config);
-
-  console.log(`[tts] Generated: ${wavPath}`);
-  return wavPath;
-}
-
-async function edgeTts(
-  text: string,
-  outputPath: string,
-  config: BridgeConfig
-): Promise<void> {
   const { EdgeTTS } = await import("@andresaya/edge-tts");
-  const { randomBytes } = await import("crypto");
-  const { tmpdir } = await import("os");
+  const { MPEGDecoder } = await import("mpg123-decoder");
 
   const tts = new EdgeTTS();
-  const tmpMp3 = join(tmpdir(), `walkieclaw_tts_${randomBytes(4).toString("hex")}.mp3`);
+  await tts.synthesize(text, config.ttsVoice);
+  const mp3Buf = tts.toBuffer();
 
-  try {
-    await tts.synthesize(text, config.ttsVoice);
+  // Decode MP3 → PCM using WASM decoder (no subprocess)
+  const decoder = new MPEGDecoder();
+  await decoder.ready;
+  const decoded = decoder.decode(new Uint8Array(mp3Buf));
+  decoder.free();
 
-    // Get audio as buffer and write to temp MP3 file ourselves
-    const mp3Buf = tts.toBuffer();
-    writeFileSync(tmpMp3, mp3Buf);
-    console.log(`[tts] MP3 saved (${mp3Buf.length} bytes): ${tmpMp3}`);
-
-    // Convert MP3 to WAV via ffmpeg
-    await convertMp3FileToWav(tmpMp3, outputPath, config);
-  } finally {
-    try { unlinkSync(tmpMp3); } catch {}
+  // Mix to mono (average channels) + convert Float32 → Int16
+  const channels = decoded.channelData;
+  const numSamples = channels[0].length;
+  const mono = new Int16Array(numSamples);
+  for (let i = 0; i < numSamples; i++) {
+    let sample = channels[0][i];
+    if (channels.length > 1) sample = (sample + channels[1][i]) / 2;
+    mono[i] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
   }
-}
 
-/**
- * Convert an MP3 file to WAV via ffmpeg.
- */
-async function convertMp3FileToWav(
-  mp3Path: string,
-  wavPath: string,
-  config: BridgeConfig
-): Promise<void> {
-  try {
-    const { execFileSync } = await import("child_process");
-
-    execFileSync("ffmpeg", [
-      "-y", "-i", mp3Path,
-      "-ar", String(config.outputSampleRate),
-      "-ac", "1",
-      "-sample_fmt", "s16",
-      wavPath,
-    ], { timeout: 10000, stdio: "pipe" });
-
-    const wav = readFileSync(wavPath);
-    const processed = postprocessAudio(wav, config.outputSampleRate);
-    writeFileSync(wavPath, processed);
-    console.log(`[tts] WAV converted: ${wavPath}`);
-  } catch (err: any) {
-    console.error(`[tts] ffmpeg conversion failed: ${err.message}`);
-    console.warn("[tts] Please install ffmpeg:");
-    console.warn("[tts]   Ubuntu/Debian: sudo apt install ffmpeg");
-    console.warn("[tts]   macOS: brew install ffmpeg");
-    console.warn("[tts]   Windows: winget install ffmpeg");
-
-    // Write silence as placeholder so pipeline doesn't crash
-    const silence = Buffer.alloc(config.outputSampleRate * 2);
-    const wav = pcmToWav(silence, config.outputSampleRate);
-    writeFileSync(wavPath, wav);
+  // Resample to target rate if needed (Edge TTS outputs 24kHz)
+  // Copy via Uint8Array to avoid TypeScript ArrayBuffer/SharedArrayBuffer issues
+  let pcm: Buffer = Buffer.alloc(mono.byteLength);
+  Buffer.from(new Uint8Array(mono.buffer, mono.byteOffset, mono.byteLength)).copy(pcm);
+  if (decoded.sampleRate !== config.outputSampleRate) {
+    pcm = resample(pcm, decoded.sampleRate, config.outputSampleRate);
   }
+
+  // Wrap in WAV + add beep/silence
+  const wav = pcmToWav(pcm, config.outputSampleRate);
+  const processed = postprocessAudio(wav, config.outputSampleRate);
+  writeFileSync(wavPath, processed);
+
+  console.log(`[tts] Generated (${(mp3Buf.length / 1024).toFixed(0)}KB MP3 → ${(processed.length / 1024).toFixed(0)}KB WAV): ${wavPath}`);
+  return wavPath;
 }
 
 /**
