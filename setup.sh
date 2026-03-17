@@ -2,15 +2,25 @@
 # =============================================================================
 # WalkieClaw Bridge — Setup Reference Script
 # =============================================================================
-# This is NOT meant to be run all at once — it's a step-by-step reference.
-# Run the relevant sections on the correct machines.
+# WARNING: This is a REFERENCE — not meant to be run all at once!
+# Read through it and run the relevant sections manually on the correct machines.
+#
+# For the recommended local setup, use the Node.js bridge instead:
+#   cd walkieclaw-bridge && npm install && npm run build && npm link
+#   walkieclaw-bridge
+#
+# This script covers the Python (VPS) bridge setup.
 # =============================================================================
 
-echo "=== WalkieClaw Bridge Setup ==="
+echo "=== WalkieClaw Bridge Setup Reference ==="
 echo ""
-echo "Choose a deployment mode:"
-echo "  LOCAL:  bridge.py + OpenClaw on your PC (same LAN as ESP32)"
-echo "  VPS:    bridge.py + OpenClaw on a remote server"
+echo "WARNING: This is a reference script — do NOT run it blindly!"
+echo "Read through it and run the relevant sections manually."
+echo ""
+echo "For the recommended local setup, use the Node.js bridge instead:"
+echo "  See walkieclaw-bridge/README.md"
+echo ""
+echo "This script covers the Python (VPS) bridge deployment:"
 echo ""
 
 # =============================================================================
@@ -31,7 +41,7 @@ cat << 'LOCAL_SETUP'
    # Windows: download from https://ffmpeg.org/download.html
 
 3. Configure:
-   cp local.env.example .env
+   cp .env.example .env
    # Edit .env — set HTTP_ADVERTISE_HOST to your PC's LAN IP
    # Set BRIDGE_API_KEY (must match secrets.yaml)
    # Set OPENCLAW_TOKEN
@@ -65,7 +75,7 @@ cat << 'VPS_SETUP'
    apt install -y ffmpeg
 
 4. Configure:
-   cp vps.env.example .env
+   cp .env.example .env
    # Edit .env — set HTTP_ADVERTISE_HOST to your VPS public IP
    # Set BRIDGE_API_KEY (must match secrets.yaml)
    # Set OPENCLAW_TOKEN
@@ -117,9 +127,10 @@ cat << 'FLASH_COMMANDS'
    cp secrets.yaml.example secrets.yaml
    # Edit secrets.yaml — fill in WiFi, API key, etc.
 
-4. Edit walkieclaw.yaml:
-   # Set bridge_host to your VPS IP or local PC LAN IP
-   # Set the keyed_start prefix to first 8 chars of your bridge_api_key
+4. Configure the device:
+   # After flashing, visit http://<device_ip>/ in your browser
+   # Set Bridge Host to your VPS IP or local PC LAN IP
+   # Set Bridge API Key to match your bridge's key
 
 5. Flash:
    esphome run walkieclaw.yaml

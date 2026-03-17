@@ -30,8 +30,7 @@ start_relay.bat
 # Reference repos
 /AIPI-Lite-ESPHome/
 
-# Docs with personal infrastructure details
-TAILSCALE.md
+# (TAILSCALE.md is now tracked — sanitized for public use)
 
 # Test files
 udp_test.h

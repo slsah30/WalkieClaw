@@ -1,8 +1,14 @@
 # WalkieClaw
 
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Platform: ESP32-S3](https://img.shields.io/badge/platform-ESP32--S3-blue)
+
 **A tiny AI walkie-talkie you can build yourself.**
 
-Push a button. Talk. Get a spoken AI response from the little speaker. That's it. No app, no cloud subscription, no Alexa - just a $15 dev board and your own [OpenClaw](https://github.com/openclaw) AI agent.
+Push a button. Talk. Get a spoken AI response from the little speaker. That's it. No app, no cloud subscription, no Alexa - just a **$15 ESP32-S3 dev board** ([AIPI Lite](https://www.amazon.com/AIPI-Lite-Customizable-Character-Real-Time-Interactive/dp/B0FQNNVV36)) and your own [OpenClaw](https://github.com/openclaw) AI agent.
+
+> **You need hardware to use this project.** WalkieClaw runs on the [AIPI Lite](https://www.amazon.com/AIPI-Lite-Customizable-Character-Real-Time-Interactive/dp/B0FQNNVV36) (~$15), an ESP32-S3 board with a built-in mic, speaker, LCD, and LED. No soldering, no breadboard -- just flash and go.
 
 Works on home WiFi or your phone's hotspot. Take it anywhere.
 
@@ -56,7 +62,15 @@ The AIPI Lite board was designed by [xorigin AI](https://github.com/xorigin-ai) 
 
 ## Quick Start
 
-There are two ways to run the bridge. Pick whichever fits your setup.
+The bridge is the software that runs on a computer (your PC or a server) and connects the ESP32 to your AI agent. There are two implementations -- pick whichever fits your setup:
+
+| | **Local Bridge (Node.js)** | **VPS Bridge (Python)** |
+|---|---|---|
+| **Runs on** | Your PC, same network as ESP32 | A remote server (VPS) |
+| **Best for** | Getting started, daily use | Always-on, remote access |
+| **STT speed** | ~0.5s (GPU) | ~2-4s (CPU) |
+| **Dependencies** | Node.js, Python (for whisper) | Python, ffmpeg |
+| **File** | `walkieclaw-bridge/` | `bridge.py` |
 
 ### Option A: Local Bridge (Node.js - recommended for getting started)
 
@@ -127,7 +141,7 @@ cp .env.example .env
 python bridge.py
 ```
 
-Requires firewall rules for UDP:12345 and TCP:8080 on your server.
+Requires firewall rules for UDP:12345 and TCP:8080 on your server. See [TAILSCALE.md](TAILSCALE.md) if you're using Tailscale for networking.
 
 ### Option C: VPS with Docker (easiest for remote servers)
 
@@ -272,8 +286,10 @@ Everything is protected with a shared API key:
 | `udp_relay.py` | UDP relay (for indirect routing setups) |
 | `secrets.yaml.example` | Template for WiFi/OTA credentials |
 | `.env.example` | Bridge config template (works for local and VPS) |
+| `TAILSCALE.md` | Tailscale networking guide (VPS/local bridge over WireGuard) |
 | `setup.sh` | Step-by-step VPS setup reference |
 | `requirements.txt` | Python dependencies (for VPS bridge) |
+| `CONTRIBUTING.md` | Contributor setup and guidelines |
 | `LICENSE` | MIT license |
 
 ## Things We Learned the Hard Way
@@ -304,7 +320,7 @@ So you don't have to:
 
 ## Contributing
 
-Found a bug? Have an idea? Open an issue or PR - this project is meant to be built on.
+Found a bug? Have an idea? Open an issue or PR - this project is meant to be built on. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
 
 Some ideas for contributors:
 - Wake word detection (hands-free mode)
