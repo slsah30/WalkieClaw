@@ -76,6 +76,10 @@ esphome:
       - lambda: |-
           id(last_activity_ms) = millis();
           ESP_LOGI("boot", "Volume restored: %.0f%%", id(speaker_volume) * 100.0f);
+          // Hide info overlay widgets on boot
+          lv_obj_add_flag(id(ip_bar_bg), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(id(lbl_ip), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_add_flag(id(lbl_bridge), LV_OBJ_FLAG_HIDDEN);
       - if:
           condition:
             lambda: 'return id(cfg_bridge_host).state.empty();'
@@ -147,6 +151,14 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'true'
+  - id: show_info_overlay
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: info_overlay_time
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
 
 font:
   - file: "gfonts://Inter"
@@ -288,16 +300,89 @@ lvgl:
     - id: main_page
       styles: black_bg
       widgets:
-        # --- Row 1: Title (y=4) ---
+        # --- Row 1: Title + Battery (y=4) ---
         - label:
             id: lbl_status
-            align: TOP_MID
-            y: 8
+            align: TOP_LEFT
+            x: 4
+            y: 6
             text: "WalkieClaw"
             text_color: 0xFF69B4
             text_font: inter_12
+        - label:
+            id: lbl_battery
+            align: TOP_RIGHT
+            x: -4
+            y: 6
+            text: "---"
+            text_color: 0xFFA500
+            text_font: montserrat_10
 
-        # --- Row 2: IP + WiFi bar (y=22) ---
+        # --- Row 2: WiFi signal (y=20) ---
+        - label:
+            id: lbl_wifi
+            align: TOP_LEFT
+            x: 4
+            y: 20
+            text: "WiFi ..."
+            text_color: 0x88CCFF
+            text_font: montserrat_10
+
+        # --- Separator (y=30) ---
+        - bar:
+            id: banner_sep
+            align: TOP_MID
+            y: 30
+            width: 124
+            height: 2
+            min_value: 0
+            max_value: 100
+            value: 100
+            radius: 0
+            indicator:
+              bg_color: 0x763B06
+              border_width: 0
+              radius: 0
+
+        # --- Action status (y=34) ---
+        - label:
+            id: lbl_action
+            align: TOP_LEFT
+            x: 4
+            y: 34
+            text: "Booting"
+            text_color: 0x3FB950
+            text_font: montserrat_14
+
+        # --- Response text — large area (y=52, height=64) ---
+        - label:
+            id: lbl_reply
+            align: TOP_LEFT
+            x: 4
+            y: 52
+            width: 120
+            height: 64
+            long_mode: SCROLL_CIRCULAR
+            anim_time: 10s
+            text: "..."
+            text_color: 0x888888
+            text_font: montserrat_14
+
+        # --- VU meter at bottom ---
+        - bar:
+            id: vu_meter
+            align: BOTTOM_MID
+            y: -4
+            width: 118
+            height: 4
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator:
+              bg_color: 0x3388FF
+
+        # --- Hidden info overlay (shown on dual-button press) ---
+        # IP, Bridge, API key — hidden by default
         - bar:
             id: ip_bar_bg
             align: TOP_MID
@@ -321,86 +406,15 @@ lvgl:
             text_color: 0x88CCFF
             text_font: montserrat_10
         - label:
-            id: lbl_wifi
-            align: TOP_RIGHT
-            x: -4
-            y: 24
-            text: "WiFi ..."
-            text_color: 0x88CCFF
-            text_font: montserrat_10
-
-        # --- Thin blue separator line below banner ---
-        - bar:
-            id: banner_sep
-            align: TOP_MID
-            y: 38
-            width: 124
-            height: 2
-            min_value: 0
-            max_value: 100
-            value: 100
-            radius: 0
-            indicator:
-              bg_color: 0x763B06
-              border_width: 0
-              radius: 0
-
-        # --- Row 3: Bridge + Battery (y=40) ---
-        - label:
             id: lbl_bridge
             align: TOP_LEFT
             x: 4
             y: 40
-            width: 95
+            width: 120
             text: "Bridge: ..."
             text_color: 0xFFFFFF
             text_font: montserrat_10
             long_mode: CLIP
-        - label:
-            id: lbl_battery
-            align: TOP_RIGHT
-            x: -4
-            y: 40
-            text: "---"
-            text_color: 0xFFA500
-            text_font: montserrat_10
-
-        # --- Row 4: Action status (y=56) ---
-        - label:
-            id: lbl_action
-            align: TOP_LEFT
-            x: 4
-            y: 56
-            text: "Booting"
-            text_color: 0x3FB950
-            text_font: montserrat_14
-
-        # --- Row 5: Response text — scrolling (y=76) ---
-        - label:
-            id: lbl_reply
-            align: TOP_LEFT
-            x: 4
-            y: 76
-            width: 120
-            height: 24
-            long_mode: SCROLL_CIRCULAR
-            anim_time: 10s
-            text: "..."
-            text_color: 0x888888
-            text_font: montserrat_18
-
-        # --- VU meter at bottom ---
-        - bar:
-            id: vu_meter
-            align: BOTTOM_MID
-            y: -4
-            width: 118
-            height: 4
-            min_value: 0
-            max_value: 100
-            value: 0
-            indicator:
-              bg_color: 0x3388FF
 
 # --- Power Hold (GPIO10) — keeps device alive on battery ---
 switch:
@@ -839,6 +853,39 @@ binary_sensor:
 # Intervals — Polling + Health Check
 # =============================================================================
 interval:
+  # Dual-button press detection + auto-hide info overlay
+  - interval: 200ms
+    then:
+      - lambda: |-
+          // Check if both buttons are pressed (both are active-low with pullup)
+          bool talk_pressed = !gpio_get_level(GPIO_NUM_42);
+          bool vol_pressed = !gpio_get_level(GPIO_NUM_1);
+
+          if (talk_pressed && vol_pressed && !id(show_info_overlay)) {
+            // Show overlay
+            id(show_info_overlay) = true;
+            id(info_overlay_time) = millis();
+            lv_obj_clear_flag(id(ip_bar_bg), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(lbl_ip), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(lbl_bridge), LV_OBJ_FLAG_HIDDEN);
+            // Hide normal content behind overlay
+            lv_obj_add_flag(id(lbl_action), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(lbl_reply), LV_OBJ_FLAG_HIDDEN);
+            ESP_LOGI("ui", "Info overlay shown");
+          }
+
+          // Auto-hide after 10 seconds
+          if (id(show_info_overlay) && (millis() - id(info_overlay_time) > 10000)) {
+            id(show_info_overlay) = false;
+            lv_obj_add_flag(id(ip_bar_bg), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(lbl_ip), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(lbl_bridge), LV_OBJ_FLAG_HIDDEN);
+            // Restore normal content
+            lv_obj_clear_flag(id(lbl_action), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(lbl_reply), LV_OBJ_FLAG_HIDDEN);
+            ESP_LOGI("ui", "Info overlay hidden");
+          }
+
   # Poll VPS for response every 2s while in POLLING state
   - interval: 2s
     then:
