@@ -76,6 +76,15 @@ esphome:
       - lambda: |-
           id(last_activity_ms) = millis();
           ESP_LOGI("boot", "Volume restored: %.0f%%", id(speaker_volume) * 100.0f);
+      # Start wake word if it was enabled before reboot
+      - if:
+          condition:
+            switch.is_on: cfg_wake_word_enabled
+          then:
+            - micro_wake_word.start:
+                id: wake_word
+            - lambda: ESP_LOGI("boot", "Wake word auto-started (was enabled)");
+      - lambda: |-
           // Hide info overlay widgets on boot
           lv_obj_add_flag(id(ip_bar_bg), LV_OBJ_FLAG_HIDDEN);
           lv_obj_add_flag(id(lbl_ip), LV_OBJ_FLAG_HIDDEN);
@@ -449,8 +458,12 @@ switch:
     entity_category: config
     on_turn_on:
       - lambda: ESP_LOGI("wake", "Wake word detection enabled");
+      - micro_wake_word.start:
+          id: wake_word
     on_turn_off:
       - lambda: ESP_LOGI("wake", "Wake word detection disabled");
+      - micro_wake_word.stop:
+          id: wake_word
 
 # --- Status LED (WS2812 on GPIO46) ---
 light:
@@ -531,9 +544,12 @@ microphone:
 # Disabled by default to save battery.
 # =============================================================================
 micro_wake_word:
+  id: wake_word
   microphone: mic_input
   models:
     - model: hey_jarvis
+      probability_cutoff: 0.85
+      sliding_window_size: 5
   on_wake_word_detected:
     - lambda: |-
         if (!id(cfg_wake_word_enabled).state) return;
