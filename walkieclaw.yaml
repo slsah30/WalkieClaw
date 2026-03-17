@@ -449,14 +449,8 @@ switch:
     entity_category: config
     on_turn_on:
       - lambda: ESP_LOGI("wake", "Wake word detection enabled");
-      - microphone.capture:
-          id: mic_input
     on_turn_off:
-      - lambda: |-
-          ESP_LOGI("wake", "Wake word detection disabled");
-          if (id(voice_state) == 0) {
-            // Only stop mic if not in an active recording session
-          }
+      - lambda: ESP_LOGI("wake", "Wake word detection disabled");
 
 # --- Status LED (WS2812 on GPIO46) ---
 light:
