@@ -21,7 +21,7 @@ node --version  # must be 18.0.0 or higher
 pip install faster-whisper
 ```
 
-If you have an NVIDIA GPU, this gives you sub-second speech-to-text. Without it, the bridge falls back to CPU-based whisper (slower but still works).
+If you have an NVIDIA GPU, this gives you sub-second speech-to-text. Requires [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) installed first. Without it, the bridge falls back to CPU-based whisper (slower but still works).
 
 ### 3. OpenClaw
 The AI agent framework that provides the brains. OpenClaw is an open-source AI agent framework — a self-hosted AI assistant you fully control.

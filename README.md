@@ -92,6 +92,8 @@ cd ..
 
 # 4. Install GPU whisper dependencies (optional but makes STT 60x faster)
 pip install faster-whisper
+# If you have an NVIDIA GPU, install the CUDA Toolkit first:
+# https://developer.nvidia.com/cuda-toolkit
 
 # 5. Start the bridge (it auto-starts OpenClaw gateway + whisper server)
 walkieclaw-bridge
@@ -117,13 +119,27 @@ python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-cp vps.env.example .env
+cp .env.example .env
 # Edit .env — fill in your OpenClaw URL and API key
 
 python bridge.py
 ```
 
 Requires firewall rules for UDP:12345 and TCP:8080 on your server.
+
+### Option C: VPS with Docker (easiest for remote servers)
+
+```bash
+git clone https://github.com/slsah30/WalkieClaw.git
+cd WalkieClaw
+
+cp .env.example .env
+# Edit .env — set your OpenClaw URL and API key
+
+docker compose up -d
+```
+
+That's it. The bridge runs in a container with all dependencies included.
 
 ### Flash the ESP32
 
@@ -253,7 +269,7 @@ Everything is protected with a shared API key:
 | `simulator.html` | Browser-based display simulator |
 | `udp_relay.py` | UDP relay (for indirect routing setups) |
 | `secrets.yaml.example` | Template for WiFi/OTA credentials |
-| `vps.env.example` | Bridge config for VPS mode |
+| `.env.example` | Bridge config template (works for local and VPS) |
 | `setup.sh` | Step-by-step VPS setup reference |
 | `requirements.txt` | Python dependencies (for VPS bridge) |
 | `LICENSE` | MIT license |

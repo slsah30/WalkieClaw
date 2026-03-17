@@ -42,6 +42,9 @@ walkieclaw-bridge/dist/
 walkieclaw-bridge/*.log
 walkieclaw-bridge/.tsbuildinfo
 
+# Docker local overrides
+docker-compose.override.yml
+
 # OS files
 Thumbs.db
 .DS_Store
