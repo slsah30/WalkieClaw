@@ -531,6 +531,7 @@ microphone:
 # Disabled by default to save battery.
 # =============================================================================
 micro_wake_word:
+  microphone: mic_input
   models:
     - model: hey_jarvis
   on_wake_word_detected:
@@ -564,19 +565,34 @@ micro_wake_word:
           - lvgl.label.update:
               id: lbl_action
               text: "Listening..."
+          - switch.turn_off: speaker_enable
+          - delay: 100ms
           - microphone.capture:
               id: mic_input
-          # Auto-stop after 10 seconds max recording
+          # Auto-stop after 10 seconds max (silence detection is on the bridge side)
           - delay: 10s
           - if:
               condition:
                 lambda: 'return id(voice_state) == 1;'
               then:
-                - lambda: |-
-                    id(voice_state) = 2;  // POLLING
-                    udp_stream.send_marker("STOP");
                 - microphone.stop_capture:
                     id: mic_input
+                - lambda: |-
+                    udp_stream.send_marker("STOP");
+                - delay: 500ms
+                - switch.turn_on: speaker_enable
+                - lambda: |-
+                    id(voice_state) = 2;  // POLLING
+                    id(poll_count) = 0;
+                - lvgl.label.update:
+                    id: lbl_action
+                    text: "Processing..."
+                - light.turn_on:
+                    id: status_led
+                    brightness: 15%
+                    red: 0%
+                    green: 0%
+                    blue: 100%
 
 # =============================================================================
 # Scripts
