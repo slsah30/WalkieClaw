@@ -100,52 +100,256 @@ Options:
   --voice <voice>         Edge TTS voice (default: en-GB-RyanNeural)
   --api-key <key>         Set API key (auto-generated if not set)
   --advertise-host <ip>   IP to advertise in WAV URLs
+  --max-turns <n>         Conversation history turns to keep (default: 10)
+  --language <code>       Language code (en, es, fr, de, ja, zh, etc.)
   -h, --help              Show help
 ```
 
-## How It Works
+## Features
 
-1. **Button press** on ESP32 starts recording from the onboard microphone
-2. **UDP audio** streams raw I2S audio to the bridge on port 12345
-3. **faster-whisper** on GPU transcribes the audio to text (~0.5 seconds)
-4. **OpenClaw** processes the text through your AI agent via `/v1/chat/completions` (~2-3 seconds)
-5. **Edge TTS** converts the response to speech, decoded in-process via WASM (~0.5 seconds)
-6. **HTTP polling** - the ESP32 picks up the audio URL and plays it through the speaker
+### Conversation Memory
 
-No subprocesses are spawned per request. No ffmpeg needed. No visible windows.
-
-## Configuration
-
-Config is stored at `~/.walkieclaw/config.json`. Use `walkieclaw-bridge reset` to start fresh.
-
-The bridge auto-detects your LAN IP and finds free ports. If the default ports (8080/12345) are in use, it will try the next available port.
-
-### Setting Up Your OpenClaw Agent
-
-The bridge talks to your `main` OpenClaw agent by default. For the best experience, set up your agent's workspace:
+The bridge remembers conversation context per device. Each device keeps the last 10 turns (20 messages) by default, so the AI can reference what you said earlier.
 
 ```bash
-# Your agent workspace lives at:
-# ~/.openclaw/agents/main/
+# Change the number of turns to keep
+walkieclaw-bridge --max-turns 20
 
-# Key files to create:
-# IDENTITY.md  - Who the agent is
-# SOUL.md      - Personality and behavior guidelines
+# History is per-device and resets when the device disconnects (10 min idle)
 ```
 
-Without these files, the agent will give generic responses. With them, you get a personalized AI voice assistant.
+View or clear history via the API:
+```bash
+# View conversation history for a device
+curl http://localhost:8080/api/history/172.20.9.89 -H "X-API-Key: YOUR_KEY"
 
-## API Endpoints
+# Clear history
+curl -X DELETE http://localhost:8080/api/history/172.20.9.89 -H "X-API-Key: YOUR_KEY"
+```
 
-All endpoints except `/audio/*` require an `X-API-Key` header.
+### Timers and Reminders
+
+Set timers that speak a message on the device when they fire. Great for cooking timers, medication reminders, or meeting alerts.
+
+```bash
+# Set a 5-minute timer
+curl -X POST http://localhost:8080/api/timer \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"text": "Your 5 minute timer is up!", "delay_seconds": 300}'
+
+# Set a timer for a specific device
+curl -X POST http://localhost:8080/api/timer \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"text": "Time to stretch!", "delay_seconds": 1800, "device": "172.20.9.89"}'
+
+# List active timers
+curl http://localhost:8080/api/timers -H "X-API-Key: YOUR_KEY"
+
+# Cancel a timer
+curl -X DELETE http://localhost:8080/api/timer/timer_abc123 -H "X-API-Key: YOUR_KEY"
+```
+
+Your OpenClaw agent can also set timers -- just say "remind me in 10 minutes to check the oven" and the WalkieClaw skill handles it automatically. See `walkieclaw-skill/SKILL.md` for the full skill docs.
+
+**Note:** Timers are stored in memory and lost if the bridge restarts. Delivery has up to a 30-second delay (device health poll interval).
+
+### Multi-language Support
+
+The bridge supports 16 languages out of the box. Set the language and both speech recognition (Whisper) and text-to-speech (Edge TTS) are configured automatically.
+
+```bash
+# Start the bridge in Spanish
+walkieclaw-bridge --language es
+
+# Start in Japanese
+walkieclaw-bridge --language ja
+
+# Override just the voice while keeping a specific language
+walkieclaw-bridge --language fr --voice fr-FR-DeniseNeural
+```
+
+**Supported languages:**
+
+| Code | Language | Default Voice |
+|------|----------|---------------|
+| `en` | English | en-GB-RyanNeural |
+| `es` | Spanish | es-ES-AlvaroNeural |
+| `fr` | French | fr-FR-HenriNeural |
+| `de` | German | de-DE-ConradNeural |
+| `it` | Italian | it-IT-DiegoNeural |
+| `pt` | Portuguese | pt-BR-AntonioNeural |
+| `ja` | Japanese | ja-JP-KeitaNeural |
+| `ko` | Korean | ko-KR-InJoonNeural |
+| `zh` | Chinese | zh-CN-YunxiNeural |
+| `ar` | Arabic | ar-SA-HamedNeural |
+| `hi` | Hindi | hi-IN-MadhurNeural |
+| `ru` | Russian | ru-RU-DmitryNeural |
+| `nl` | Dutch | nl-NL-MaartenNeural |
+| `pl` | Polish | pl-PL-MarekNeural |
+| `sv` | Swedish | sv-SE-MattiasNeural |
+| `tr` | Turkish | tr-TR-AhmetNeural |
+
+You can use any [Edge TTS voice](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support) with `--voice`.
+
+### Web Dashboard
+
+A built-in web dashboard for monitoring and controlling your devices from a browser.
+
+**Open:** `http://localhost:8080/dashboard`
+
+The dashboard shows:
+- **Bridge status** -- online/offline, connected device count, active timers
+- **Connected devices** -- IP, status, conversation length, pending notifications
+- **Conversation history** -- browse and clear per-device chat history
+- **Send notification** -- type a message and send it to any device (or all)
+- **Timer management** -- set new timers, view countdown, cancel active timers
+
+**Authentication:** The dashboard prompts for your API key on first visit. You can also pass it via URL: `http://localhost:8080/dashboard?key=YOUR_KEY`
+
+### Streaming Response
+
+AI responses are streamed sentence-by-sentence for faster perceived response time. Instead of waiting for the full response before generating speech, the bridge:
+
+1. Streams the OpenClaw response via SSE
+2. TTS generates audio for the first sentence immediately
+3. Sends the first chunk to the device while generating the next
+4. Device polls and plays each chunk sequentially
+
+The `/api/response` endpoint includes a `has_more` field so the device knows to keep polling for additional chunks.
+
+### Walkie-Talkie Mode
+
+Pair two WalkieClaw devices for direct voice communication -- no AI, just person-to-person audio like a real walkie-talkie.
+
+```bash
+# Pair two devices
+curl -X POST http://localhost:8080/api/pair \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"device_a": "172.20.9.89", "device_b": "172.20.8.222"}'
+
+# Now when either device records, the audio goes directly to the other device
+
+# List active pairs
+curl http://localhost:8080/api/pairs -H "X-API-Key: YOUR_KEY"
+
+# Unpair
+curl -X POST http://localhost:8080/api/unpair \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"device": "172.20.9.89"}'
+```
+
+In walkie-talkie mode, the audio pipeline skips Whisper and OpenClaw entirely -- raw audio is converted to WAV and pushed to the paired device's notification queue. Both devices are automatically unpaired when either one is unpaired.
+
+**Note:** Delivery has up to a 30-second delay due to the health poll interval. This is not real-time -- it's more like voice messages.
+
+### OTA Firmware Updates
+
+Push firmware updates to your ESP32 devices remotely without plugging in a USB cable. Requires ESPHome installed on the bridge machine.
+
+```bash
+# Set the ESPHome config directory (where walkieclaw.yaml lives)
+export ESPHOME_CONFIG_DIR=/path/to/aipi-openclaw
+
+# Trigger OTA update to a device
+curl -X POST http://localhost:8080/api/ota \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"device": "172.20.9.89"}'
+
+# Check OTA status
+curl http://localhost:8080/api/ota/status -H "X-API-Key: YOUR_KEY"
+```
+
+Only one OTA update can run at a time. Progress is logged to the bridge console.
+
+### Push Notifications
+
+Send spoken messages to the device at any time -- alerts, reminders, or just fun messages.
+
+```bash
+# Send to all devices
+curl -X POST http://localhost:8080/api/notify \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"text": "Dinner is ready!"}'
+
+# Send to a specific device
+curl -X POST http://localhost:8080/api/notify \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"text": "Your package arrived.", "device": "172.20.9.89"}'
+```
+
+## Firmware Features
+
+These features are built into the ESP32 firmware (`walkieclaw.yaml`) and require flashing.
+
+### Wake Word Detection
+
+Say **"Hey Jarvis"** to start recording hands-free -- no button press needed.
+
+**How to enable:**
+1. Visit `http://<device-ip>/` in your browser
+2. Toggle **"Wake Word Enabled"** to ON
+3. The device now listens for "Hey Jarvis" continuously
+
+When the wake word is detected, the device beeps, starts recording, and auto-stops after 10 seconds of silence or max recording time. The push-to-talk button still works as a manual override.
+
+**Power note:** Wake word detection keeps the microphone running continuously, which uses more battery. It defaults to OFF. Enable it when the device is plugged in for best results.
+
+### Battery Calibration
+
+The firmware uses a LiPo discharge lookup table for accurate battery percentage:
+
+| Voltage | Percentage |
+|---------|-----------|
+| 4.20V | 100% |
+| 4.10V | 90% |
+| 3.95V | 70% |
+| 3.80V | 50% |
+| 3.70V | 30% |
+| 3.50V | 10% |
+| 3.30V | 0% |
+
+If your battery percentage seems off, calibrate the voltage multiplier:
+
+1. Check the ESPHome logs: `esphome logs walkieclaw.yaml`
+2. Look for `ADC voltage after multiply: X.XXXV`
+3. Compare with a multimeter reading on the battery
+4. Adjust `battery_voltage_multiplier` in `walkieclaw.yaml` substitutions (default: 2.5)
+
+Example: If the log shows 3.90V but your multimeter reads 4.10V, change the multiplier to `2.5 * (4.10 / 3.90) = 2.63`.
+
+### Volume Persistence
+
+Volume settings persist across reboots. Change the volume with the left button (cycles Off -> Low -> Med -> Normal -> Loud) and it will be the same after a power cycle.
+
+## API Reference
+
+All endpoints except `/audio/*` and `/dashboard` require an `X-API-Key` header.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Device health check, delivers pending commands |
-| `/api/response` | GET | Poll for AI response (idle/processing/ready) |
-| `/api/devices` | GET | List connected devices |
+| `/api/response` | GET | Poll for AI response (idle/processing/ready + has_more) |
+| `/api/devices` | GET | List connected devices with conversation stats |
+| `/api/history/:ip` | GET | Get conversation history for a device |
+| `/api/history/:ip` | DELETE | Clear conversation history for a device |
 | `/api/notify` | POST | Queue a TTS notification |
+| `/api/timer` | POST | Schedule a timer/reminder |
+| `/api/timers` | GET | List active timers |
+| `/api/timer/:id` | DELETE | Cancel a timer |
+| `/api/pair` | POST | Pair two devices for walkie-talkie mode |
+| `/api/unpair` | POST | Unpair a device |
+| `/api/pairs` | GET | List active device pairs |
 | `/api/connect_wifi` | POST | Queue a WiFi switch command |
+| `/api/ota` | POST | Trigger ESPHome OTA update |
+| `/api/ota/status` | GET | Check OTA progress |
+| `/dashboard` | GET | Web dashboard (auth via `?key=` or login prompt) |
 | `/audio/*` | GET | Serve generated WAV files (no auth) |
 
 ## Security
@@ -174,6 +378,12 @@ Make sure OpenClaw is installed (`npm install -g openclaw`) and configured (`ope
 
 **Slow transcription (30+ seconds):**
 You're probably running CPU-only whisper. Install `faster-whisper` with CUDA support for sub-second GPU transcription. Requires an NVIDIA GPU with CUDA toolkit.
+
+**ESPHome build fails with out-of-memory:**
+The wake word feature (micro_wake_word + TFLite) is memory-hungry to compile. Build with single-threaded compilation:
+```bash
+PLATFORMIO_SETTING_JOBS=1 esphome compile walkieclaw.yaml
+```
 
 ## License
 
