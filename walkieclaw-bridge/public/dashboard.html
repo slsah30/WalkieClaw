@@ -115,6 +115,31 @@
   </div>
 </div>
 
+<h2>Device Setup</h2>
+<div class="card">
+  <p style="color:#888;font-size:0.85em;margin-bottom:10px">Configure a device's bridge connection via its ESPHome REST API. Enter the device's IP (not the bridge IP).</p>
+  <div class="form-row">
+    <input type="text" id="setup-device-ip" placeholder="Device IP (e.g. 172.20.8.222)">
+    <button class="secondary" onclick="loadDeviceConfig()">Load</button>
+  </div>
+  <div class="form-row">
+    <input type="text" id="setup-bridge-host" placeholder="Bridge Host">
+    <input type="text" id="setup-api-key" placeholder="Bridge API Key">
+    <button onclick="pushDeviceConfig()">Save to Device</button>
+  </div>
+  <div id="setup-status" style="color:#888;font-size:0.85em;margin-top:5px"></div>
+</div>
+
+<h2>Walkie-Talkie</h2>
+<div class="card">
+  <div class="form-row">
+    <select id="pair-a"><option value="">Device A...</option></select>
+    <select id="pair-b"><option value="">Device B...</option></select>
+    <button onclick="pairDevices()">Pair</button>
+  </div>
+  <div id="pairs-list"><p class="empty">No active pairs</p></div>
+</div>
+
 <h2>Active Timers</h2>
 <div class="card">
   <div id="timers-list"><p class="empty">No active timers</p></div>
@@ -196,11 +221,21 @@ async function refreshDevices() {
       </tr>`;
     }).join('');
 
+    const pairA = document.getElementById('pair-a');
+    const pairB = document.getElementById('pair-b');
+    const curA = pairA.value, curB = pairB.value;
+    pairA.innerHTML = '<option value="">Device A...</option>';
+    pairB.innerHTML = '<option value="">Device B...</option>';
+
     data.devices.forEach(d => {
       devSelect.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
       notifySelect.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
       timerSelect.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
+      pairA.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
+      pairB.innerHTML += `<option value="${d.ip}">${d.ip}</option>`;
     });
+    if (curA) pairA.value = curA;
+    if (curB) pairB.value = curB;
 
     if (currentHistVal) devSelect.value = currentHistVal;
   } catch (e) {
@@ -310,12 +345,81 @@ async function cancelTimer(id) {
   } catch (e) { toast('Failed to cancel timer', true); }
 }
 
+async function loadDeviceConfig() {
+  const ip = document.getElementById('setup-device-ip').value.trim();
+  if (!ip) return toast('Enter a device IP', true);
+  const status = document.getElementById('setup-status');
+  status.textContent = 'Loading...';
+  try {
+    const data = await fetchApi(`/api/device-config/${ip}`);
+    document.getElementById('setup-bridge-host').value = data.bridge_host || '';
+    document.getElementById('setup-api-key').value = data.api_key || '';
+    status.textContent = `Loaded config from ${ip}`;
+  } catch (e) { status.textContent = `Failed to reach ${ip}`; }
+}
+
+async function pushDeviceConfig() {
+  const ip = document.getElementById('setup-device-ip').value.trim();
+  if (!ip) return toast('Enter a device IP', true);
+  const bridgeHost = document.getElementById('setup-bridge-host').value.trim();
+  const apiKey = document.getElementById('setup-api-key').value.trim();
+  const status = document.getElementById('setup-status');
+  status.textContent = 'Saving...';
+  try {
+    const body = {};
+    if (bridgeHost) body.bridge_host = bridgeHost;
+    if (apiKey) body.api_key = apiKey;
+    await fetchApi(`/api/device-config/${ip}`, { method: 'POST', body: JSON.stringify(body) });
+    status.textContent = `Config saved to ${ip}`;
+    toast('Config pushed to device!');
+  } catch (e) { status.textContent = `Failed to push config to ${ip}`; }
+}
+
+async function pairDevices() {
+  const a = document.getElementById('pair-a').value;
+  const b = document.getElementById('pair-b').value;
+  if (!a || !b) return toast('Select both devices', true);
+  if (a === b) return toast('Cannot pair a device with itself', true);
+  try {
+    await fetchApi('/api/pair', { method: 'POST', body: JSON.stringify({ device_a: a, device_b: b }) });
+    toast('Devices paired!');
+    refreshPairs();
+  } catch (e) { toast('Failed to pair', true); }
+}
+
+async function unpairDevice(ip) {
+  try {
+    await fetchApi('/api/unpair', { method: 'POST', body: JSON.stringify({ device: ip }) });
+    toast('Unpaired');
+    refreshPairs();
+  } catch (e) { toast('Failed to unpair', true); }
+}
+
+async function refreshPairs() {
+  try {
+    const data = await fetchApi('/api/pairs');
+    const container = document.getElementById('pairs-list');
+    if (data.pairs.length === 0) {
+      container.innerHTML = '<p class="empty">No active pairs</p>';
+      return;
+    }
+    container.innerHTML = data.pairs.map(p => `
+      <div class="timer-item">
+        <div class="timer-text">${p.device_a} &harr; ${p.device_b}</div>
+        <button class="danger" onclick="unpairDevice('${p.device_a}')" style="padding:4px 10px;font-size:0.8em">Unpair</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    if (e.message !== 'Unauthorized') console.error('Pairs refresh error:', e);
+  }
+}
+
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 async function refresh() {
-  await Promise.all([refreshHealth(), refreshDevices(), refreshTimers()]);
+  await Promise.all([refreshHealth(), refreshDevices(), refreshTimers(), refreshPairs()]);
 }
 
 // Initial load

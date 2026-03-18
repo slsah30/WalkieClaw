@@ -153,7 +153,7 @@ curl -X DELETE http://localhost:8080/api/timer/timer_abc123 -H "X-API-Key: YOUR_
 
 Your OpenClaw agent can also set timers -- just say "remind me in 10 minutes to check the oven" and the WalkieClaw skill handles it automatically. See `walkieclaw-skill/SKILL.md` for the full skill docs.
 
-**Note:** Timers are stored in memory and lost if the bridge restarts. Delivery has up to a 30-second delay (device health poll interval).
+**Note:** Timers are stored in memory and lost if the bridge restarts. Delivery has up to a 5-second delay (device health poll interval).
 
 ### Multi-language Support
 
@@ -205,8 +205,10 @@ The dashboard shows:
 - **Conversation history** -- browse and clear per-device chat history
 - **Send notification** -- type a message and send it to any device (or all)
 - **Timer management** -- set new timers, view countdown, cancel active timers
+- **Device setup** -- push bridge host and API key to devices remotely via ESPHome REST API
+- **Walkie-talkie controls** -- pair/unpair devices directly from the dashboard
 
-**Authentication:** The dashboard prompts for your API key on first visit. You can also pass it via URL: `http://localhost:8080/dashboard?key=YOUR_KEY`
+**Access:** Visit `http://localhost:8080/` (redirects to dashboard). The API key is auto-injected so no manual auth is needed from localhost.
 
 ### Streaming Response
 
@@ -244,7 +246,9 @@ curl -X POST http://localhost:8080/api/unpair \
 
 In walkie-talkie mode, the audio pipeline skips Whisper and OpenClaw entirely -- raw audio is converted to WAV and pushed to the paired device's notification queue. Both devices are automatically unpaired when either one is unpaired.
 
-**Note:** Delivery has up to a 30-second delay due to the health poll interval. This is not real-time -- it's more like voice messages.
+When paired, both devices show a **"Walkie-Talkie"** display with a cyan LED and the paired device IP. After recording, the sender sees "Sent!" confirmation. The receiver plays the audio and the display resets automatically. You can also pair/unpair from the web dashboard.
+
+**Note:** Delivery has up to a 5-second delay due to the health poll interval.
 
 ### OTA Firmware Updates
 
@@ -290,14 +294,19 @@ These features are built into the ESP32 firmware (`walkieclaw.yaml`) and require
 
 ### Wake Word Detection
 
-Say **"Hey Jarvis"** to start recording hands-free -- no button press needed.
+Say a wake word to start recording hands-free -- no button press needed. Four wake words are supported simultaneously:
+
+- **"Hey Jarvis"**
+- **"Okay Nabu"**
+- **"Hey Mycroft"**
+- **"Alexa"**
 
 **How to enable:**
 1. Visit `http://<device-ip>/` in your browser
 2. Toggle **"Wake Word Enabled"** to ON
-3. The device now listens for "Hey Jarvis" continuously
+3. The device now listens for any of the four wake words continuously
 
-When the wake word is detected, the device beeps, starts recording, and auto-stops after 10 seconds of silence or max recording time. The push-to-talk button still works as a manual override.
+When a wake word is detected, the device starts recording and auto-stops after 10 seconds. Wake word detection is properly re-armed after each conversation completes. The push-to-talk button still works as a manual override.
 
 **Power note:** Wake word detection keeps the microphone running continuously, which uses more battery. It defaults to OFF. Enable it when the device is plugged in for best results.
 

@@ -54,6 +54,17 @@ export function stripMarkdown(text: string): string {
 }
 
 /**
+ * Normalize an IP address to bare IPv4.
+ * Fastify's request.ip returns "::ffff:1.2.3.4" on dual-stack sockets,
+ * while UDP rinfo.address returns "1.2.3.4". This mismatch causes
+ * separate DeviceState objects for the same device.
+ */
+export function normalizeIp(ip: string): string {
+  if (ip.startsWith("::ffff:")) return ip.slice(7);
+  return ip;
+}
+
+/**
  * Format bytes as human-readable string.
  */
 export function formatBytes(bytes: number): string {

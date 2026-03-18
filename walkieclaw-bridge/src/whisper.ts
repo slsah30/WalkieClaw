@@ -39,11 +39,16 @@ export async function transcribe(
 
     const startTime = Date.now();
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
     const resp = await fetch(`${WHISPER_URL}/transcribe?lang=${encodeURIComponent(language)}`, {
       method: "POST",
       headers: { "Content-Type": "audio/pcm" },
       body: new Uint8Array(pcm16k),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!resp.ok) {
       const err = await resp.text().catch(() => "");

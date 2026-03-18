@@ -34,7 +34,7 @@ substitutions:
   # bridge_host is now configured at runtime via the web UI (text entity cfg_bridge_host)
   bridge_udp_port: "12345"
   bridge_http_port: "8080"
-  sleep_timeout_ms: "300000"
+  sleep_timeout_ms: "1800000"
   # Battery ADC voltage divider multiplier. Calibrate by comparing
   # raw ADC voltage (in logs) with a multimeter reading on the battery.
   # Default 2.5 works for most AIPI Lite boards. Adjust if battery
@@ -76,14 +76,6 @@ esphome:
       - lambda: |-
           id(last_activity_ms) = millis();
           ESP_LOGI("boot", "Volume restored: %.0f%%", id(speaker_volume) * 100.0f);
-      # Start wake word if it was enabled before reboot
-      - if:
-          condition:
-            switch.is_on: cfg_wake_word_enabled
-          then:
-            - micro_wake_word.start:
-                id: wake_word
-            - lambda: ESP_LOGI("boot", "Wake word auto-started (was enabled)");
       - lambda: |-
           // Hide info overlay widgets on boot
           lv_obj_add_flag(id(ip_bar_bg), LV_OBJ_FLAG_HIDDEN);
@@ -152,6 +144,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'false'
+  - id: wake_word_boot_done
+    type: bool
+    restore_value: false
+    initial_value: 'false'
   - id: battery_pct
     type: int
     restore_value: false
@@ -160,10 +156,6 @@ globals:
     type: bool
     restore_value: false
     initial_value: 'true'
-  - id: detected_wake_word
-    type: std::string
-    restore_value: false
-    initial_value: '""'
   - id: show_info_overlay
     type: bool
     restore_value: false
@@ -172,6 +164,10 @@ globals:
     type: uint32_t
     restore_value: false
     initial_value: '0'
+  - id: walkie_mode
+    type: bool
+    restore_value: false
+    initial_value: 'false'
 
 font:
   - file: "gfonts://Inter"
@@ -469,24 +465,6 @@ switch:
       - micro_wake_word.stop:
           id: wake_word
 
-select:
-  - platform: template
-    name: "Wake Word"
-    id: cfg_wake_word_select
-    optimistic: true
-    restore_value: true
-    initial_option: "Hey Jarvis"
-    icon: "mdi:microphone-message"
-    entity_category: config
-    options:
-      - "Hey Jarvis"
-      - "Okay Nabu"
-      - "Hey Mycroft"
-      - "Alexa"
-    on_value:
-      - lambda: |-
-          ESP_LOGI("wake", "Wake word changed to: %s", x.c_str());
-
 # --- Status LED (WS2812 on GPIO46) ---
 light:
   - platform: esp32_rmt_led_strip
@@ -560,8 +538,9 @@ microphone:
 # =============================================================================
 # Wake Word Detection (on-device, ESP32-S3)
 # =============================================================================
-# Multiple wake words available — select which one to use via the web UI.
-# Enable/disable via the cfg_wake_word_enabled switch.
+# Listens for "Hey Jarvis" wake word via micro_wake_word.
+# When detected, auto-starts recording (same as button press).
+# Enable/disable via the cfg_wake_word_enabled switch in the web UI.
 # Disabled by default to save battery.
 # =============================================================================
 micro_wake_word:
@@ -582,66 +561,70 @@ micro_wake_word:
       sliding_window_size: 5
   on_wake_word_detected:
     - lambda: |-
-        ESP_LOGI("wake", "Wake word detected!");
+        if (!id(cfg_wake_word_enabled).state) return;
+        if (id(voice_state) != 0) return;  // Only trigger from IDLE
+        ESP_LOGI("wake", "Wake word detected! Starting recording...");
     - if:
         condition:
           and:
             - switch.is_on: cfg_wake_word_enabled
             - lambda: 'return id(voice_state) == 0;'
         then:
-          - script.execute: wake_word_record
+          # Same sequence as button press: start recording
+          - micro_wake_word.stop:
+              id: wake_word
+          - lambda: |-
+              id(voice_state) = 1;  // RECORDING
+              id(last_activity_ms) = millis();
+              // Send keyed START marker
+              std::string key = id(cfg_api_key).state;
+              if (!key.empty()) {
+                udp_stream.send_keyed_start(key.substr(0, 8).c_str());
+              } else {
+                udp_stream.send_marker("START");
+              }
+          - light.turn_on:
+              id: status_led
+              brightness: 15%
+              red: 100%
+              green: 0%
+              blue: 0%
+          - lvgl.label.update:
+              id: lbl_action
+              text: "Listening..."
+          - switch.turn_off: speaker_enable
+          - delay: 100ms
+          - microphone.capture:
+              id: mic_input
+          # Auto-stop after 10 seconds max (silence detection is on the bridge side)
+          - delay: 10s
+          - if:
+              condition:
+                lambda: 'return id(voice_state) == 1;'
+              then:
+                - microphone.stop_capture:
+                    id: mic_input
+                - lambda: |-
+                    udp_stream.send_marker("STOP");
+                - delay: 500ms
+                - switch.turn_on: speaker_enable
+                - lambda: |-
+                    id(voice_state) = 2;  // POLLING
+                    id(poll_count) = 0;
+                - lvgl.label.update:
+                    id: lbl_action
+                    text: "Processing..."
+                - light.turn_on:
+                    id: status_led
+                    brightness: 15%
+                    red: 0%
+                    green: 0%
+                    blue: 100%
 
+# =============================================================================
+# Scripts
+# =============================================================================
 script:
-  - id: wake_word_record
-    mode: single
-    then:
-      - lambda: |-
-          id(voice_state) = 1;  // RECORDING
-          id(last_activity_ms) = millis();
-          std::string key = id(cfg_api_key).state;
-          if (!key.empty()) {
-            udp_stream.send_keyed_start(key.substr(0, 8).c_str());
-          } else {
-            udp_stream.send_marker("START");
-          }
-      - light.turn_on:
-          id: status_led
-          brightness: 15%
-          red: 100%
-          green: 0%
-          blue: 0%
-      - lvgl.label.update:
-          id: lbl_action
-          text: "Listening..."
-      - switch.turn_off: speaker_enable
-      - delay: 100ms
-      - microphone.capture:
-          id: mic_input
-      # Auto-stop after 10 seconds max
-      - delay: 10s
-      - if:
-          condition:
-            lambda: 'return id(voice_state) == 1;'
-          then:
-            - microphone.stop_capture:
-                id: mic_input
-            - lambda: |-
-                udp_stream.send_marker("STOP");
-            - delay: 500ms
-            - switch.turn_on: speaker_enable
-            - lambda: |-
-                id(voice_state) = 2;  // POLLING
-                id(poll_count) = 0;
-            - lvgl.label.update:
-                id: lbl_action
-                text: "Processing..."
-            - light.turn_on:
-                id: status_led
-                brightness: 15%
-                red: 0%
-                green: 0%
-                blue: 100%
-
   - id: play_response
     mode: single
     then:
@@ -679,15 +662,42 @@ script:
       - lambda: |-
           id(voice_state) = 0;  // IDLE
           id(pending_wav_url) = "";
-      - lvgl.label.update:
-          id: lbl_action
-          text: "Ready"
-      - light.turn_on:
-          id: status_led
-          brightness: 15%
-          red: 0%
-          green: 100%
-          blue: 0%
+      - if:
+          condition:
+            lambda: 'return id(walkie_mode);'
+          then:
+            - lambda: |-
+                lv_label_set_text(id(lbl_action), "Walkie-Talkie");
+                lv_obj_set_style_text_color(id(lbl_action), lv_color_hex(0x00D2FF), 0);
+                lv_obj_invalidate(id(lbl_action));
+                lv_label_set_text(id(lbl_reply), " ");
+                lv_obj_invalidate(id(lbl_reply));
+            - light.turn_on:
+                id: status_led
+                brightness: 15%
+                red: 0%
+                green: 80%
+                blue: 100%
+          else:
+            - lambda: |-
+                lv_label_set_text(id(lbl_action), "Ready");
+                lv_obj_invalidate(id(lbl_action));
+                lv_label_set_text(id(lbl_reply), " ");
+                lv_obj_invalidate(id(lbl_reply));
+            - light.turn_on:
+                id: status_led
+                brightness: 15%
+                red: 0%
+                green: 100%
+                blue: 0%
+      # Re-arm wake word if enabled
+      - if:
+          condition:
+            switch.is_on: cfg_wake_word_enabled
+          then:
+            - micro_wake_word.start:
+                id: wake_word
+            - lambda: ESP_LOGI("wake", "Wake word re-armed after playback");
 
   - id: play_boot_chime
     mode: single
@@ -801,10 +811,13 @@ binary_sensor:
             ESP_LOGI("btn", "Interrupting processing");
           }
           id(voice_state) = 1;  // RECORDING
+          id(last_activity_ms) = millis();
       - if:
           condition:
             lambda: 'return id(voice_state) == 1;'
           then:
+            - micro_wake_word.stop:
+                id: wake_word
             - light.turn_on:
                 id: status_led
                 brightness: 15%
@@ -907,6 +920,25 @@ binary_sensor:
 # Intervals — Polling + Health Check
 # =============================================================================
 interval:
+  # One-shot: start wake word after boot (wait for I2S/mic to be fully ready)
+  - interval: 5s
+    then:
+      - if:
+          condition:
+            and:
+              - lambda: 'return !id(wake_word_boot_done) && millis() > 10000;'
+              - switch.is_on: cfg_wake_word_enabled
+          then:
+            - lambda: 'id(wake_word_boot_done) = true;'
+            - micro_wake_word.start:
+                id: wake_word
+            - lambda: ESP_LOGI("wake", "Wake word auto-started after boot");
+      - if:
+          condition:
+            lambda: 'return !id(wake_word_boot_done) && millis() > 10000;'
+          then:
+            - lambda: 'id(wake_word_boot_done) = true;'
+
   # Dual-button press detection + auto-hide info overlay
   - interval: 200ms
     then:
@@ -1017,9 +1049,6 @@ interval:
 
                         ESP_LOGI("poll", "Ready! wav=%s dur=%.1f", wav_url.c_str(), duration);
 
-                        id(pending_wav_url) = wav_url;
-                        id(play_duration_ms) = (int)(duration * 1000);
-
                         // Show response text on display
                         if (!text.empty()) {
                           lv_label_set_text(id(lbl_reply), text.c_str());
@@ -1027,8 +1056,20 @@ interval:
                           lv_obj_invalidate(id(lbl_reply));
                         }
 
-                        // Signal ready-to-play (script runs from separate interval)
-                        id(voice_state) = 4;
+                        // No WAV = text-only confirmation (walkie-talkie "Sent!")
+                        if (wav_url.empty()) {
+                          ESP_LOGI("poll", "Text-only response, skipping playback");
+                          lv_label_set_text(id(lbl_action), text.c_str());
+                          lv_obj_invalidate(id(lbl_action));
+                          lv_label_set_text(id(lbl_reply), " ");
+                          lv_obj_invalidate(id(lbl_reply));
+                          id(voice_state) = 0;  // Back to IDLE
+                        } else {
+                          id(pending_wav_url) = wav_url;
+                          id(play_duration_ms) = (int)(duration * 1000);
+                          // Signal ready-to-play (script runs from separate interval)
+                          id(voice_state) = 4;
+                        }
 
                       } else if (status == "idle") {
                         // Still idle, keep polling
@@ -1041,19 +1082,32 @@ interval:
                   - lambda: |-
                       ESP_LOGW("poll", "Poll timeout after %d attempts", id(poll_count));
                       id(voice_state) = 0;
-                  - lvgl.label.update:
-                      id: lbl_action
-                      text: "Timeout"
+                      lv_label_set_text(id(lbl_action), "Timeout");
+                      lv_obj_invalidate(id(lbl_action));
+                      lv_label_set_text(id(lbl_reply), " ");
+                      lv_obj_invalidate(id(lbl_reply));
                   - delay: 2s
-                  - lvgl.label.update:
-                      id: lbl_action
-                      text: "Ready"
+                  - lambda: |-
+                      if (id(walkie_mode)) {
+                        lv_label_set_text(id(lbl_action), "Walkie-Talkie");
+                        lv_obj_set_style_text_color(id(lbl_action), lv_color_hex(0x00D2FF), 0);
+                      } else {
+                        lv_label_set_text(id(lbl_action), "Ready");
+                      }
+                      lv_obj_invalidate(id(lbl_action));
                   - light.turn_on:
                       id: status_led
                       brightness: 15%
                       red: 0%
                       green: 100%
                       blue: 0%
+                  # Re-arm wake word if enabled
+                  - if:
+                      condition:
+                        switch.is_on: cfg_wake_word_enabled
+                      then:
+                        - micro_wake_word.start:
+                            id: wake_word
 
   # Pick up ready-to-play signal and trigger playback
   - interval: 500ms
@@ -1064,8 +1118,8 @@ interval:
           then:
             - script.execute: play_response
 
-  # Health check — ping VPS every 30s when idle (skip if unconfigured)
-  - interval: 30s
+  # Health check — ping bridge every 5s when idle (delivers notifications, walkie-talkie audio)
+  - interval: 5s
     then:
       - if:
           condition:
@@ -1130,6 +1184,33 @@ interval:
                           };
                           id(play_duration_ms) = (int)(find_num("notify_duration") * 1000);
                           id(voice_state) = 4;  // READY_TO_PLAY
+                        }
+
+                        // Check for walkie-talkie mode
+                        std::string wmode = find_str("walkie_mode");
+                        std::string paired = find_str("paired_with");
+                        bool was_walkie = id(walkie_mode);
+                        id(walkie_mode) = (wmode == "true");
+                        if (id(walkie_mode) && !was_walkie) {
+                          ESP_LOGI("walkie", "Walkie-talkie mode ON, paired with %s", paired.c_str());
+                          lv_label_set_text(id(lbl_action), "Walkie-Talkie");
+                          lv_obj_set_style_text_color(id(lbl_action), lv_color_hex(0x00D2FF), 0);
+                          lv_obj_invalidate(id(lbl_action));
+                          std::string ptext = ">> " + (paired.empty() ? "?" : paired) + " <<";
+                          lv_label_set_text(id(lbl_reply), ptext.c_str());
+                          lv_obj_set_style_text_color(id(lbl_reply), lv_color_hex(0x00D2FF), 0);
+                          lv_obj_invalidate(id(lbl_reply));
+                        } else if (!id(walkie_mode) && was_walkie) {
+                          ESP_LOGI("walkie", "Walkie-talkie mode OFF");
+                          lv_label_set_text(id(lbl_action), "Ready");
+                          lv_obj_set_style_text_color(id(lbl_action), lv_color_hex(0xE6EDF3), 0);
+                          lv_obj_invalidate(id(lbl_action));
+                          lv_label_set_text(id(lbl_reply), " ");
+                          lv_obj_invalidate(id(lbl_reply));
+                        } else if (id(walkie_mode) && id(voice_state) == 0) {
+                          lv_label_set_text(id(lbl_action), "Walkie-Talkie");
+                          lv_obj_set_style_text_color(id(lbl_action), lv_color_hex(0x00D2FF), 0);
+                          lv_obj_invalidate(id(lbl_action));
                         }
                       } else {
                         lv_label_set_text(id(lbl_bridge), "Bridge: err");

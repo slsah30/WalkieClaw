@@ -191,16 +191,26 @@ async function processAudio(
       const duration = getWavDuration(wav);
       const partner = devices.getDevice(device.pairedDeviceIp);
       partner.pendingNotifications.push({
-        text: sanitizeForDisplay(`Voice from ${deviceIp}`),
+        text: sanitizeForDisplay(`Incoming`),
         wavUrl,
         duration: Math.round(duration * 10) / 10,
       });
 
       console.log(`[walkie] Routed audio from ${deviceIp} to ${device.pairedDeviceIp} (${duration.toFixed(1)}s)`);
-      device.resetPollState();
+
+      // Signal "sent" back to sender so it exits POLLING state
+      device.pollStatus = "ready";
+      device.pollWavUrl = "";
+      device.pollText = "Sent!";
+      device.pollWavDuration = 0;
+      device.pollReadyTime = Date.now();
     } catch (err: any) {
       console.error(`[walkie] Error: ${err.message}`);
-      device.resetPollState();
+      device.pollStatus = "ready";
+      device.pollWavUrl = "";
+      device.pollText = "Send failed";
+      device.pollWavDuration = 0;
+      device.pollReadyTime = Date.now();
     } finally {
       device.isProcessing = false;
     }

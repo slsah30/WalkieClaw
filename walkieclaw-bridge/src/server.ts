@@ -9,7 +9,7 @@ import type { DeviceManager } from "./devices.js";
 import type { TimerManager } from "./timers.js";
 import { synthesizeSpeech, getWavUrl } from "./tts.js";
 import { getWavDuration } from "./audio.js";
-import { sanitizeForDisplay } from "./utils.js";
+import { sanitizeForDisplay, normalizeIp } from "./utils.js";
 
 export async function createHttpServer(
   config: BridgeConfig,
@@ -20,7 +20,7 @@ export async function createHttpServer(
 
   // Rate limiting
   await app.register(fastifyRateLimit, {
-    max: 30,
+    max: 200,
     timeWindow: 60_000,
   });
 
@@ -41,11 +41,14 @@ export async function createHttpServer(
     return request.headers["x-api-key"] === config.apiKey;
   }
 
+  // Redirect root to dashboard
+  app.get("/", async (request, reply) => reply.redirect("/dashboard"));
+
   // GET /health
   app.get("/health", async (request, reply) => {
     if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
 
-    const deviceIp = request.ip;
+    const deviceIp = normalizeIp(request.ip);
     const device = devices.getDevice(deviceIp);
     const resp: any = {
       status: "ok",
@@ -54,6 +57,8 @@ export async function createHttpServer(
       poll_status: device.pollStatus,
       uptime: (Date.now() - device.lastActivity) / 1000,
       connected_devices: devices.deviceCount,
+      walkie_mode: device.walkieTalkieMode,
+      paired_with: device.pairedDeviceIp || "",
     };
 
     // Deliver pending WiFi command
@@ -81,7 +86,7 @@ export async function createHttpServer(
   app.get("/api/response", async (request, reply) => {
     if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
 
-    const ip = request.ip;
+    const ip = normalizeIp(request.ip);
     const device = devices.getDevice(ip);
 
     if (device.pollStatus === "idle") {
@@ -198,12 +203,6 @@ export async function createHttpServer(
 
   // GET /dashboard
   app.get("/dashboard", async (request, reply) => {
-    // Allow auth via query param for browser access
-    const queryKey = (request.query as any)?.key;
-    if (queryKey && config.apiKey && queryKey !== config.apiKey) {
-      return reply.code(401).send("Unauthorized");
-    }
-
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     const htmlPaths = [
@@ -214,7 +213,15 @@ export async function createHttpServer(
     if (!htmlPath) {
       return reply.code(404).send("Dashboard not found");
     }
-    const html = readFileSync(htmlPath, "utf-8");
+    let html = readFileSync(htmlPath, "utf-8");
+    // Auto-inject API key so the dashboard works without manual auth
+    if (config.apiKey) {
+      const safeKey = config.apiKey.replace(/[^a-zA-Z0-9]/g, "");
+      html = html.replace(
+        "let API_KEY = localStorage.getItem('wc_api_key') || '';",
+        `let API_KEY = localStorage.getItem('wc_api_key') || '${safeKey}';`
+      );
+    }
     return reply.type("text/html").send(html);
   });
 
@@ -399,6 +406,51 @@ export async function createHttpServer(
   app.get("/api/ota/status", async (request, reply) => {
     if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
     return { in_progress: otaInProgress };
+  });
+
+  // GET /api/device-config/:ip — read bridge config from a device's ESPHome REST API
+  app.get("/api/device-config/:ip", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const ip = (request.params as any).ip;
+    try {
+      const [hostResp, keyResp] = await Promise.all([
+        fetch(`http://${ip}/text/bridge_host`, { signal: AbortSignal.timeout(5000) }),
+        fetch(`http://${ip}/text/bridge_api_key`, { signal: AbortSignal.timeout(5000) }),
+      ]);
+      const host = hostResp.ok ? (await hostResp.json() as any).state : "";
+      const key = keyResp.ok ? (await keyResp.json() as any).state : "";
+      return { ip, bridge_host: host, api_key: key };
+    } catch (err: any) {
+      return reply.code(502).send({ error: `Cannot reach device ${ip}: ${err.message}` });
+    }
+  });
+
+  // POST /api/device-config/:ip — push bridge config to a device's ESPHome REST API
+  app.post("/api/device-config/:ip", async (request, reply) => {
+    if (!checkApiKey(request)) return reply.code(401).send("Unauthorized");
+    const ip = (request.params as any).ip;
+    const body = request.body as any;
+    const results: string[] = [];
+
+    if (body?.bridge_host !== undefined) {
+      try {
+        await fetch(`http://${ip}/text/bridge_host/set?value=${encodeURIComponent(body.bridge_host)}`, { signal: AbortSignal.timeout(5000) });
+        results.push(`bridge_host=${body.bridge_host}`);
+      } catch (err: any) {
+        results.push(`bridge_host FAILED: ${err.message}`);
+      }
+    }
+    if (body?.api_key !== undefined) {
+      try {
+        await fetch(`http://${ip}/text/bridge_api_key/set?value=${encodeURIComponent(body.api_key)}`, { signal: AbortSignal.timeout(5000) });
+        results.push(`api_key=${body.api_key.slice(0, 8)}...`);
+      } catch (err: any) {
+        results.push(`api_key FAILED: ${err.message}`);
+      }
+    }
+
+    console.log(`[http] Device config pushed to ${ip}: ${results.join(", ")}`);
+    return { status: "ok", ip, results };
   });
 
   await app.listen({ port: config.httpPort, host: config.httpHost });

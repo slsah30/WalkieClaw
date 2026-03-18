@@ -1,6 +1,7 @@
 import { createSocket, type Socket } from "dgram";
 import type { BridgeConfig } from "./config.js";
 import type { DeviceManager } from "./devices.js";
+import { normalizeIp } from "./utils.js";
 
 export type AudioReadyCallback = (deviceIp: string) => void;
 
@@ -12,7 +13,7 @@ export function createUdpListener(
   const socket = createSocket("udp4");
 
   socket.on("message", (data, rinfo) => {
-    const senderIp = rinfo.address;
+    const senderIp = normalizeIp(rinfo.address);
 
     // Handle ESP_IP marker
     if (data.subarray(0, 7).toString() === "ESP_IP:") {
