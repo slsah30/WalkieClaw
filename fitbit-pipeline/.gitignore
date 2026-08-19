@@ -1,0 +1,26 @@
+# Secrets. Never commit the OAuth client secret or any token.
+secrets/
+*.json.token
+token.json
+client_secret*.json
+
+# Local configuration, which carries paths and the chosen port.
+config.toml
+
+# The database and anything derived from it.
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.csv
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/

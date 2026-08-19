@@ -1,0 +1,13 @@
+{
+  "dataPoints": [
+    {
+      "dailyHeartRateVariability": {
+        "date": {"year": 2026, "month": 8, "day": 17},
+        "averageHeartRateVariabilityMilliseconds": 41.7,
+        "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds": 48.2,
+        "entropy": 2.31,
+        "nonRemHeartRateBeatsPerMinute": "56"
+      }
+    }
+  ]
+}

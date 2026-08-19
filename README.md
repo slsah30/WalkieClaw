@@ -307,6 +307,14 @@ So you don't have to:
 - **`media_player` can't send custom headers** - keep WAV endpoints open but unguessable
 - **`windowsHide: true` + `detached: true` on Windows** - detached CREATES a console window, don't use it
 
+## Also in This Repo
+
+**[`fitbit-pipeline/`](fitbit-pipeline/)** - an unrelated side project that lives here for
+convenience: a self-hosted pipeline that pulls personal Fitbit Charge 6 data from the
+Google Health API v4 into SQLite and serves local reports and a dashboard. It shares no
+code with the walkie-talkie firmware or bridge. See
+[`fitbit-pipeline/README.md`](fitbit-pipeline/README.md) to set it up.
+
 ## Credits & Thanks
 
 - **[Robert Lipe](https://www.robertlipe.com/449-2/)** - reverse engineered the AIPI Lite hardware, mapped the GPIO pinout, identified the ES8311 codec and display controller, and documented everything so the rest of us could build on it.

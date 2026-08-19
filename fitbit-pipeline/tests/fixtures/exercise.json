@@ -1,0 +1,28 @@
+{
+  "dataPoints": [
+    {
+      "dataPointName": "users/me/dataTypes/exercise/dataPoints/ex-991",
+      "exercise": {
+        "exerciseType": "RUNNING",
+        "displayName": "Run",
+        "activeDuration": "2705s",
+        "interval": {
+          "startTime": "2026-08-17T22:00:00Z",
+          "endTime": "2026-08-17T22:46:00Z",
+          "startUtcOffset": "-18000s",
+          "civilStartTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 17}}
+        },
+        "metricsSummary": {
+          "distanceMillimeters": 8046720,
+          "caloriesKcal": 512.4,
+          "steps": "7420",
+          "averageHeartRateBeatsPerMinute": "148",
+          "activeZoneMinutes": "62",
+          "elevationGainMillimeters": 42672,
+          "averageSpeedMillimetersPerSecond": 2915.0
+        },
+        "exerciseMetadata": {"hasGps": true}
+      }
+    }
+  ]
+}

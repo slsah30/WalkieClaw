@@ -1,0 +1,27 @@
+# Optional: keep the dashboard running as a service.
+#
+#   sudo cp deploy/fitbit-sync.dashboard.service /etc/systemd/system/
+#   sudo systemctl enable --now fitbit-sync.dashboard
+
+[Unit]
+Description=Fitbit pipeline dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=travis
+Group=travis
+WorkingDirectory=/opt/fitbit-pipeline
+Environment=FITBIT_SYNC_CONFIG=/opt/fitbit-pipeline/config.toml
+ExecStart=/opt/fitbit-pipeline/.venv/bin/fitbit-sync serve
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/fitbit-pipeline/data
+
+[Install]
+WantedBy=multi-user.target

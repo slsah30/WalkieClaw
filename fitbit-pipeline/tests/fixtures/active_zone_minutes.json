@@ -1,0 +1,28 @@
+{
+  "dataPoints": [
+    {
+      "activeZoneMinutes": {
+        "activeZoneMinutes": "1",
+        "heartRateZone": "FAT_BURN",
+        "interval": {
+          "startTime": "2026-08-17T22:10:00Z",
+          "endTime": "2026-08-17T22:11:00Z",
+          "startUtcOffset": "-18000s",
+          "civilStartTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 17, "minutes": 10}}
+        }
+      }
+    },
+    {
+      "activeZoneMinutes": {
+        "activeZoneMinutes": "2",
+        "heartRateZone": "CARDIO",
+        "interval": {
+          "startTime": "2026-08-17T22:11:00Z",
+          "endTime": "2026-08-17T22:12:00Z",
+          "startUtcOffset": "-18000s",
+          "civilStartTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 17, "minutes": 11}}
+        }
+      }
+    }
+  ]
+}

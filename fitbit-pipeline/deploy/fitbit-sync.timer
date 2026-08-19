@@ -1,0 +1,19 @@
+# Fires the daily sync at 06:30 local time.
+#
+# The default sync window is three days, so a missed run costs nothing: the
+# next run re-reads the same days and upserts over them.
+
+[Unit]
+Description=Daily Fitbit pipeline sync
+Documentation=file:///opt/fitbit-pipeline/README.md
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+# Spread the wakeup so it does not land on the same second every day.
+RandomizedDelaySec=15min
+# Catch up after the machine was asleep or powered off.
+Persistent=true
+Unit=fitbit-sync.service
+
+[Install]
+WantedBy=timers.target

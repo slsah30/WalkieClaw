@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fitbit-pipeline"
+version = "1.0.0"
+description = "Personal Fitbit Charge 6 ingestion and reporting on the Google Health API v4"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "httpx>=0.27",
+    "google-auth>=2.30",
+    "google-auth-oauthlib>=1.2",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+fitbit-sync = "fitbit_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fitbit_pipeline*"]
+
+[tool.setuptools.package-data]
+fitbit_pipeline = ["migrations/*.sql", "reports/templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

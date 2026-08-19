@@ -1,0 +1,13 @@
+{
+  "dataPoints": [
+    {
+      "dailyOxygenSaturation": {
+        "date": {"year": 2026, "month": 8, "day": 17},
+        "averagePercentage": 95.8,
+        "lowerBoundPercentage": 93.1,
+        "upperBoundPercentage": 98.2,
+        "standardDeviationPercentage": 1.4
+      }
+    }
+  ]
+}
