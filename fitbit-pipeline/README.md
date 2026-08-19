@@ -158,6 +158,7 @@ fitbit-sync backfill --since 2024-01-01
 fitbit-sync backfill --restart     # ignore stored checkpoints
 fitbit-sync daily --data-type sleep --data-type heart-rate
 fitbit-sync status                 # per data type: coverage, backfill progress, record counts
+fitbit-sync rebuild                # re-derive daily_summary from the normalized tables
 ```
 
 The daily window matters. A sleep session posts to the API after you wake up, a

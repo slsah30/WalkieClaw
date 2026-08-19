@@ -77,6 +77,9 @@ class SyncConfig:
     max_retries: int = 6
     backfill_start: str = ""
     skip_data_types: list[str] = field(default_factory=list)
+    # Override the API root. Only useful for pointing at a local mock server
+    # during testing; leave it empty to talk to Google.
+    base_url: str = ""
 
 
 @dataclass

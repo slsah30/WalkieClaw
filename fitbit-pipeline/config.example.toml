@@ -36,6 +36,9 @@ max_retries = 6
 backfill_start = ""
 # Data types to skip entirely, by data type id, for example ["exercise"].
 skip_data_types = []
+# API root override. Only for pointing at a local mock server during testing.
+# Leave empty to talk to https://health.googleapis.com/v4.
+base_url = ""
 
 [server]
 host = "127.0.0.1"

@@ -100,3 +100,12 @@ def test_an_unknown_scope_alias_names_the_valid_ones():
     config.auth.extra_scopes = ["telepathy"]
     with pytest.raises(ConfigError, match="ecg"):
         config.auth.scopes()
+
+
+def test_base_url_defaults_to_the_real_api(tmp_path):
+    from fitbit_pipeline.api import BASE_URL
+
+    assert Config().sync.base_url == ""
+    config = load_config(write(tmp_path, '[sync]\nbase_url = "http://localhost:9/v4"\n'))
+    assert config.sync.base_url == "http://localhost:9/v4"
+    assert BASE_URL == "https://health.googleapis.com/v4"

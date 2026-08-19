@@ -161,6 +161,13 @@ def start_run(
     range_start: str | None = None,
     range_end: str | None = None,
 ) -> int:
+    # A run killed without a chance to clean up (SIGKILL, power loss) leaves its
+    # row marked running. Reap those here so the run log stays truthful.
+    conn.execute(
+        "UPDATE sync_runs SET status = 'interrupted', finished_at = ? "
+        "WHERE status = 'running'",
+        (utc_now(),),
+    )
     cursor = conn.execute(
         """
         INSERT INTO sync_runs (mode, started_at, status, range_start, range_end)

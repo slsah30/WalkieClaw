@@ -17,7 +17,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from fitbit_pipeline import __version__, db
-from fitbit_pipeline.api import ApiError, HealthApiClient
+from fitbit_pipeline.api import BASE_URL, ApiError, HealthApiClient
 from fitbit_pipeline.auth import (
     AuthError,
     CredentialStore,
@@ -79,6 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, help="override the port")
 
     sub.add_parser("status", help="show sync state and recent runs")
+    sub.add_parser(
+        "rebuild",
+        help="recompute daily_summary from the normalized tables, for every day",
+    )
     return parser
 
 
@@ -102,6 +106,7 @@ def _client(config: Config) -> tuple[HealthApiClient, CredentialStore]:
     credentials = CredentialStore(config.auth.token_file, config.auth.scopes())
     client = HealthApiClient(
         credentials,
+        base_url=config.sync.base_url or BASE_URL,
         data_source_family=config.sync.data_source_family,
         max_requests_per_minute=config.sync.max_requests_per_minute,
         max_retries=config.sync.max_retries,
@@ -348,6 +353,23 @@ def command_status(args: argparse.Namespace, config: Config) -> int:
         conn.close()
 
 
+def command_rebuild(args: argparse.Namespace, config: Config) -> int:
+    """Re-derive daily_summary from scratch.
+
+    Useful after restoring a database, after a change to the aggregation logic,
+    or if a series of interrupted runs left gaps in the derived table.
+    """
+    from fitbit_pipeline.aggregate import rebuild_daily_summary
+
+    conn = db.open_database(config.database.path)
+    try:
+        days = rebuild_daily_summary(conn)
+        print(f"Rebuilt daily_summary for {days} day(s).")
+        return 0
+    finally:
+        conn.close()
+
+
 def _print_result(result) -> None:
     print(
         f"{result.mode}: {result.status}, {result.records} records, "
@@ -366,6 +388,7 @@ COMMANDS = {
     "daily": command_daily,
     "serve": command_serve,
     "status": command_status,
+    "rebuild": command_rebuild,
 }
 
 

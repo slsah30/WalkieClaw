@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 from fitbit_pipeline import db
 from fitbit_pipeline.api import ApiError, HealthApiClient, data_points, payload_hash
+from fitbit_pipeline.auth import AuthError
 from fitbit_pipeline.aggregate import rebuild_daily_summary
 from fitbit_pipeline.datatypes import DataType, enabled_data_types
 from fitbit_pipeline.normalize import normalize_point
@@ -285,6 +286,24 @@ class Syncer:
                             mode,
                             backfill_floor,
                         )
+            except KeyboardInterrupt:
+                # Ctrl-C during a long backfill. Checkpoints are already
+                # committed, so summarize what was fetched, record what this
+                # run achieved, and get out.
+                self._abandon_run(
+                    result,
+                    item,
+                    touched,
+                    "interrupted",
+                    f"interrupted while fetching {data_type.api_id}",
+                )
+                raise
+            except AuthError:
+                # Credentials are broken, so every remaining data type would
+                # fail the same way. Close the run and let the caller report
+                # the remedy instead of logging the same traceback 28 times.
+                self._abandon_run(result, item, touched, "failed", "authorization failed")
+                raise
             except ApiError as exc:
                 item.status = "failed"
                 item.error = str(exc)
@@ -345,6 +364,36 @@ class Syncer:
             },
         )
         return result
+
+    def _abandon_run(
+        self,
+        result: SyncResult,
+        item: TypeResult,
+        touched: set[str],
+        status: str,
+        error: str,
+    ) -> None:
+        """Close out a run that will not finish, without losing its work.
+
+        The derived daily_summary is normally rebuilt at the end of a run. A run
+        that dies partway still wrote rows, so rebuild for what it touched
+        before giving up, or the dashboard would show stale days until the next
+        run that happens to complete.
+        """
+        if self.dry_run or result.run_id is None:
+            return
+        all_touched = touched | item.dates_touched
+        if all_touched:
+            rebuild_daily_summary(self.conn, all_touched)
+        db.finish_run(
+            self.conn,
+            result.run_id,
+            status,
+            result.api_calls + item.api_calls,
+            result.records + item.records,
+            result.pages + item.pages,
+            error,
+        )
 
     def _checkpoint(
         self,

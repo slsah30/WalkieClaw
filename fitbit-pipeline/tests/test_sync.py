@@ -263,3 +263,78 @@ def test_backfill_start_falls_back_when_the_profile_is_unreadable(conn, make_cli
     client._limiter._sleep = lambda _s: None
     syncer = Syncer(conn, client)
     assert syncer.resolve_backfill_start().year == 2007
+
+
+def test_broken_credentials_abort_the_run_instead_of_failing_every_type(conn, make_client):
+    """A dead refresh token is fatal, not a per data type problem."""
+    from fitbit_pipeline.auth import AuthError
+
+    class DeadCredentials:
+        account_email = "owner@example.com"
+
+        def token(self):
+            raise AuthError("refresh token revoked")
+
+        def refresh(self):
+            raise AuthError("refresh token revoked")
+
+    client = make_client(lambda request: httpx.Response(200, json={"dataPoints": []}))
+    client.credentials = DeadCredentials()
+
+    with pytest.raises(AuthError, match="revoked"):
+        Syncer(conn, client).daily(window_days=1, end=DAY)
+
+    run = db.query_one(conn, "SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1")
+    assert run["status"] == "failed"
+    assert run["error"] == "authorization failed"
+
+
+def test_ctrl_c_records_what_the_run_achieved(conn, make_client):
+    """An interrupted run must not sit in the log as 'running' forever."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] > 2:
+            raise KeyboardInterrupt
+        return httpx.Response(200, json=load_fixture("steps.json"))
+
+    client = make_client(handler)
+    with pytest.raises(KeyboardInterrupt):
+        Syncer(conn, client).daily(window_days=1, end=DAY)
+
+    run = db.query_one(conn, "SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1")
+    assert run["status"] == "interrupted"
+    assert run["finished_at"]
+    assert run["api_calls"] > 0
+    assert "interrupted while fetching" in run["error"]
+
+
+def test_a_row_left_running_by_a_hard_kill_is_reaped_on_the_next_run(conn, fixture_client):
+    orphan = db.start_run(conn, "backfill", "2026-01-01", "2026-08-18")
+    assert db.query_one(conn, "SELECT status FROM sync_runs WHERE id = ?", (orphan,))["status"] == "running"
+
+    make_syncer(conn, fixture_client).daily(window_days=1, end=DAY)
+
+    reaped = db.query_one(conn, "SELECT * FROM sync_runs WHERE id = ?", (orphan,))
+    assert reaped["status"] == "interrupted"
+    assert reaped["finished_at"]
+
+
+def test_an_interrupted_run_still_summarizes_what_it_fetched(conn, make_client):
+    """Killing a backfill must not leave the dashboard showing stale days."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise KeyboardInterrupt
+        return httpx.Response(200, json=load_fixture("steps.json"))
+
+    client = make_client(handler)
+    with pytest.raises(KeyboardInterrupt):
+        Syncer(conn, client).daily(window_days=1, end=DAY)
+
+    summary = db.query_one(conn, "SELECT * FROM daily_summary WHERE date = ?", (DAY.isoformat(),))
+    assert summary is not None
+    assert summary["steps"] == 1592

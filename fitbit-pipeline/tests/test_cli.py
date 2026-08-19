@@ -51,3 +51,24 @@ def test_serve_without_a_database_refuses_rather_than_serving_nothing(tmp_path, 
     config.write_text(f'[database]\npath = "{tmp_path / "absent.sqlite3"}"\n')
     assert cli.main(["--config", str(config), "serve"]) == 1
     assert "No database" in capsys.readouterr().out
+
+
+def test_rebuild_recomputes_the_derived_table(tmp_path, capsys):
+    from fitbit_pipeline import db
+
+    database = tmp_path / "db.sqlite3"
+    conn = db.open_database(database)
+    db.upsert(conn, "resting_hr", {"date": "2026-08-17", "bpm": 51}, ("date",))
+    assert db.query_one(conn, "SELECT COUNT(*) AS n FROM daily_summary")["n"] == 0
+    conn.close()
+
+    config = tmp_path / "config.toml"
+    config.write_text(f'[database]\npath = "{database}"\n')
+    assert cli.main(["--config", str(config), "rebuild"]) == 0
+    assert "Rebuilt daily_summary for 1 day" in capsys.readouterr().out
+
+    conn = db.open_database(database)
+    assert db.query_one(conn, "SELECT resting_hr FROM daily_summary WHERE date = '2026-08-17'")[
+        "resting_hr"
+    ] == 51
+    conn.close()
