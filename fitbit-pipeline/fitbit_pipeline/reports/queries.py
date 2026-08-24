@@ -124,8 +124,13 @@ def sleep_sessions_for(conn: sqlite3.Connection, day: str) -> list[dict[str, Any
 def sleep_stages_for(conn: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
     return rows_to_dicts(
         conn.execute(
-            "SELECT * FROM sleep_stages WHERE session_id = ? AND is_short_awakening = 0 "
-            "ORDER BY start_time",
+            # The stage rows have no offset of their own, so carry the parent
+            # session's through for local clock rendering.
+            "SELECT stage.*, session.start_utc_offset AS utc_offset "
+            "FROM sleep_stages AS stage "
+            "JOIN sleep_sessions AS session USING (session_id) "
+            "WHERE stage.session_id = ? AND stage.is_short_awakening = 0 "
+            "ORDER BY stage.start_time",
             (session_id,),
         )
     )
@@ -224,6 +229,35 @@ def sleep_nights(conn: sqlite3.Connection, start: str, end: str) -> list[dict[st
     )
 
 
+def parse_utc_offset(utc_offset: str | None) -> float:
+    """Seconds of UTC offset from Google's "-14400s" form. Unparseable means 0."""
+    if not utc_offset:
+        return 0.0
+    text = str(utc_offset)
+    if text.endswith("s"):
+        text = text[:-1]
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def local_clock(timestamp: str | None, utc_offset: str | None) -> str:
+    """Render a stored UTC timestamp as local HH:MM using its own stored offset.
+
+    Reports are for one person in one place, so a bedtime has to read as the
+    time they saw on the clock. Slicing the ISO string instead shows UTC, which
+    is off by the whole offset and silently wrong across a DST change.
+    """
+    if not timestamp:
+        return "n/a"
+    try:
+        moment = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+    except ValueError:
+        return "n/a"
+    return (moment + timedelta(seconds=parse_utc_offset(utc_offset))).strftime("%H:%M")
+
+
 def clock_position(timestamp: str | None, utc_offset: str | None) -> float | None:
     """Local clock hour of a timestamp, shifted so an evening bedtime is negative.
 
@@ -237,16 +271,7 @@ def clock_position(timestamp: str | None, utc_offset: str | None) -> float | Non
         moment = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError:
         return None
-    offset_seconds = 0.0
-    if utc_offset:
-        text = str(utc_offset)
-        if text.endswith("s"):
-            text = text[:-1]
-        try:
-            offset_seconds = float(text)
-        except ValueError:
-            offset_seconds = 0.0
-    local = moment + timedelta(seconds=offset_seconds)
+    local = moment + timedelta(seconds=parse_utc_offset(utc_offset))
     hour = local.hour + local.minute / 60.0
     return hour - 24.0 if hour >= 12 else hour
 

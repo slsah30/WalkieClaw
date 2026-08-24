@@ -123,6 +123,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     templates.env.filters["fahrenheit"] = lambda c: _fmt(units.celsius_to_fahrenheit(c), 1)
     templates.env.filters["delta_f"] = lambda c: _fmt(units.celsius_delta_to_fahrenheit(c), 2)
     templates.env.filters["hhmm"] = units.minutes_to_hhmm
+    templates.env.filters["local_clock"] = queries.local_clock
     templates.env.filters["clock"] = _clock
     app.state.config = config
 

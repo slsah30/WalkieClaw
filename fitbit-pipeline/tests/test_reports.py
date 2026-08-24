@@ -387,3 +387,22 @@ def test_daily_view_falls_back_to_the_summary_when_no_session_row_exists(seeded)
 def test_a_custom_window_stays_selected_in_the_dropdown(client, path, expected):
     body = client.get(path).text
     assert f'<option value="{expected}" selected>' in body
+
+
+def test_local_clock_applies_the_stored_offset():
+    """Bedtimes must read as the time on the wall, not UTC.
+
+    The stored timestamp is UTC and the offset sits beside it, so slicing the
+    ISO string shows a time the user never saw. A -14400s offset moves a
+    10:54Z bedtime to 06:54 local.
+    """
+    from fitbit_pipeline.reports.queries import local_clock
+
+    assert local_clock("2026-08-22T10:54:00Z", "-14400s") == "06:54"
+    assert local_clock("2026-08-23T04:58:00Z", "-14400s") == "00:58"
+    # Crossing back over midnight, and a positive offset.
+    assert local_clock("2026-08-23T02:30:00Z", "3600s") == "03:30"
+    # Missing or unparseable offsets fall back to UTC rather than raising.
+    assert local_clock("2026-08-22T10:54:00Z", None) == "10:54"
+    assert local_clock("2026-08-22T10:54:00Z", "banana") == "10:54"
+    assert local_clock(None, "-14400s") == "n/a"

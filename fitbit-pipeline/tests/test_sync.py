@@ -338,3 +338,36 @@ def test_an_interrupted_run_still_summarizes_what_it_fetched(conn, make_client):
     summary = db.query_one(conn, "SELECT * FROM daily_summary WHERE date = ?", (DAY.isoformat(),))
     assert summary is not None
     assert summary["steps"] == 1592
+
+
+def test_calories_total_stays_null_when_basal_is_missing(conn):
+    """A partial sum must not be presented as a total.
+
+    Google returns basal-energy-burned empty for some accounts. Summing
+    active + 0 and labelling it "total" understates the day by a whole BMR
+    and silently disagrees with the Fitbit app, so prefer no number.
+    """
+    from fitbit_pipeline.aggregate import rebuild_daily_summary
+
+    day = DAY.isoformat()
+    db.upsert(
+        conn,
+        "activity_intervals",
+        {
+            "data_type": "active-energy-burned",
+            "start_time": f"{day}T12:00:00Z",
+            "source_key": "",
+            "subtype": "",
+            "end_time": f"{day}T12:01:00Z",
+            "local_date": day,
+            "value": 456.0,
+            "unit": "kcal",
+        },
+        ("data_type", "start_time", "subtype", "source_key"),
+    )
+    rebuild_daily_summary(conn, [day])
+
+    row = db.query_one(conn, "SELECT * FROM daily_summary WHERE date = ?", (day,))
+    assert row["calories_active_kcal"] == 456.0
+    assert row["calories_basal_kcal"] is None
+    assert row["calories_total_kcal"] is None

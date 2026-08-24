@@ -77,7 +77,7 @@
     <tbody>
     {% for workout in workouts %}
       <tr>
-        <td>{{ workout.start_time[11:16] }} UTC</td>
+        <td>{{ workout.start_time | local_clock(workout.start_utc_offset) }}</td>
         <td>{{ workout.display_name or workout.exercise_type }}</td>
         <td class="num">{{ (workout.duration_seconds / 60) | fmt }} min</td>
         <td class="num">{{ workout.distance_mm | miles }} mi</td>
@@ -102,8 +102,8 @@
       {% for stage in stages %}
       <tr>
         <td>{{ stage.stage | title }}</td>
-        <td>{{ stage.start_time[11:16] }} UTC</td>
-        <td>{{ stage.end_time[11:16] }} UTC</td>
+        <td>{{ stage.start_time | local_clock(stage.utc_offset) }}</td>
+        <td>{{ stage.end_time | local_clock(stage.utc_offset) }}</td>
         <td class="num">{{ (stage.duration_seconds / 60) | fmt }}</td>
       </tr>
       {% endfor %}

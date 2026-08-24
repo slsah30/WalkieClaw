@@ -134,10 +134,13 @@ def summarize_day(conn: sqlite3.Connection, day: str) -> dict[str, Any]:
         "floors": None if floors is None else int(floors),
         "calories_active_kcal": active_kcal,
         "calories_basal_kcal": basal_kcal,
+        # Only a real total. Google returns basal-energy-burned empty for some
+        # accounts, and active + 0 presented as "total" silently understates the
+        # day by a whole BMR and disagrees with the Fitbit app. Prefer no number.
         "calories_total_kcal": (
             None
-            if active_kcal is None and basal_kcal is None
-            else (active_kcal or 0.0) + (basal_kcal or 0.0)
+            if active_kcal is None or basal_kcal is None
+            else active_kcal + basal_kcal
         ),
         "azm_total": None if azm_total is None else int(azm_total),
         "azm_fat_burn": None if azm_fat is None else int(azm_fat),

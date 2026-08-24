@@ -66,8 +66,8 @@
     {% for night in nights %}
       <tr>
         <td>{{ night.local_date }}</td>
-        <td>{{ night.start_time[11:16] }} UTC</td>
-        <td>{{ night.end_time[11:16] }} UTC</td>
+        <td>{{ night.start_time | local_clock(night.start_utc_offset) }}</td>
+        <td>{{ night.end_time | local_clock(night.end_utc_offset) }}</td>
         <td class="num">{{ night.minutes_asleep | hhmm }}</td>
         <td class="num">{{ night.minutes_in_period | hhmm }}</td>
         <td class="num">{{ night.minutes_deep | fmt }}</td>
