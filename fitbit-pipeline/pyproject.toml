@@ -31,3 +31,4 @@ fitbit_pipeline = ["migrations/*.sql", "reports/templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
