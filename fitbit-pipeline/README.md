@@ -380,6 +380,24 @@ Normalized tables are what reports query:
 Schema changes ship as numbered files in `fitbit_pipeline/migrations/` and are
 applied automatically, inside a transaction, on the next run.
 
+### Metrics that came back empty on a real account
+
+A full backfill to 2015 returned nothing at any date for these, on an account
+with a Charge 6 and no smart scale:
+
+- **`basal-energy-burned`.** This is why the reports show no total calorie
+  figure. Without BMR, active calories alone is not a total, and presenting it
+  as one would understate every day and disagree with the Fitbit app. The
+  reports show active calories and leave the total blank rather than guessing.
+- **`daily-vo2-max`.** The cardio fitness score the Fitbit app displays is not
+  reachable here.
+- **`weight`, `body-fat`.** Expected with no connected scale. A single `height`
+  point exists.
+
+`floors` and `exercise` do return data, but sparsely: 2,115 and 398 points over
+eleven years. Workouts only appear when a session was actually recorded, so a
+day with high vigorous minutes and no logged exercise is normal.
+
 ### Metrics the API does not expose
 
 - **Stress and EDA.** No such data type exists in Health API v4. The Charge 6 EDA

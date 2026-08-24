@@ -287,12 +287,48 @@ is documented as covering the account's data sources including
 `FITBIT_WEB_API`-sourced points **(discovery, via `DataSource.platform`)**, which
 suggests pre migration history is reachable.
 
-This cannot be settled without a live token. The backfill is written to find out
-empirically and record the answer: it walks backward from today to
-`membershipStartDate`, and `sync_state` stores the earliest date that actually
-returned data per type. After the first backfill, compare that date against the
-Fitbit app. If there is a gap, a Takeout importer becomes worthwhile; it is a
-stretch task and is not implemented.
+**Answered on 2026-08-24 by a full backfill against a live account.** No Takeout
+importer is needed. History reaches back to the account creation date, across the
+Fitbit web API era and the migration to Google, with no gap at the boundary.
+
+The run covered 3,936 days and 10.7 million records in about four hours, and
+produced a 4.6 GB database. The earliest date that actually returned data, per
+type:
+
+| Reaches account creation, 2015-11-15 | First available |
+| --- | --- |
+| steps, distance, floors, activity-level, active-minutes | 2015-11-15 |
+| heart-rate (intraday), time-in-heart-rate-zone, daily-heart-rate-zones | 2015-11-15 |
+| exercise, weight, height | 2015-11-15 |
+| daily-resting-heart-rate | 2015-11-17 |
+| sleep | 2015-11-16 |
+| sedentary-period | 2016-03-04 |
+
+| Starts at a later device, not an API limit | First available |
+| --- | --- |
+| active-zone-minutes | 2022-12-25 |
+| oxygen-saturation, daily-oxygen-saturation | 2022-12-26 |
+| heart-rate-variability and its daily rollup | 2022-12-30 |
+| daily-sleep-temperature-derivations, respiratory-rate-sleep-summary | 2022-12-30 |
+| daily-respiratory-rate | 2022-12-31 |
+
+The 2022-12 cluster is the date the user's first sensor capable device arrived,
+not a retention boundary. Three types returned nothing at any date on this
+account: `basal-energy-burned`, `daily-vo2-max`, and `body-fat`. The first two
+have consequences for reporting and are noted in the README.
+
+**Eleven years of intraday heart rate is real and it is large.** 8.1 million
+samples, roughly one every two seconds while worn. That dominates the database
+size; skipping `heart-rate` via `sync.skip_data_types` cuts it by about 90 percent
+if daily aggregates are enough.
+
+**The reconcile endpoint fails on some ranges by width, not by content.** Two
+fourteen day chunks returned 500 no matter how often they were retried, while both
+seven day halves, every individual day, and the same fourteen days on `:list` all
+succeeded. Because the backfill walks backward, one such chunk would strand every
+older day for that data type. `fetch_range` therefore halves a range on a 5xx and
+falls back to `:list` at a single day. Expect this: it hit twice in 11,600 calls,
+about one chunk in 5,800.
 
 ### 5. Is sleep score exposed?
 
