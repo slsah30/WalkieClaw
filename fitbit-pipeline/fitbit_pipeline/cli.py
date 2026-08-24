@@ -314,11 +314,29 @@ def command_serve(args: argparse.Namespace, config: Config) -> int:
         )
         return 1
 
-    host = args.host or config.server.bind_host()
     port = args.port or config.server.port
+    if args.host:
+        host, reach = args.host, "explicit --host"
+    elif config.server.tailscale:
+        from fitbit_pipeline.net import TailscaleError, tailscale_ipv4
+
+        try:
+            host = tailscale_ipv4()
+        except TailscaleError as exc:
+            print(f"server.tailscale is set but no tailnet address was found.\n{exc}")
+            return 1
+        reach = "tailnet only"
+    elif config.server.expose_lan:
+        host, reach = config.server.bind_host(), "every interface, LAN included"
+    else:
+        host, reach = config.server.bind_host(), "this machine only"
+
     if host not in {"127.0.0.1", "localhost"}:
-        print(f"Warning: binding to {host}. The dashboard has no authentication, LAN only.")
-    print(f"Dashboard on http://{host}:{port}")
+        print(
+            f"The dashboard has no authentication. Binding {host} makes your health "
+            f"data readable by anything that can reach it ({reach})."
+        )
+    print(f"Dashboard on http://{host}:{port}  ({reach})")
     uvicorn.run(create_app(config), host=host, port=port, log_level=config.logging.level.lower())
     return 0
 

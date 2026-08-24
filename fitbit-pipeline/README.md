@@ -227,9 +227,61 @@ sqlite3 data/fitbit.sqlite3 \
   "SELECT date, steps, resting_hr, sleep_minutes_asleep FROM daily_summary ORDER BY date DESC LIMIT 14;"
 ```
 
-The dashboard binds to `127.0.0.1` and has no authentication. To reach it from
-other machines on your LAN, set `expose_lan = true` under `[server]`, which binds
-`0.0.0.0`. Do not port forward it.
+The dashboard binds to `127.0.0.1` and has no authentication. The bind address
+is therefore the only access control it has, so widen it deliberately.
+
+### Reaching the dashboard from your other devices, over Tailscale
+
+This is the recommended way to read your data from a phone or a laptop
+elsewhere. Set under `[server]`:
+
+```toml
+tailscale = true
+```
+
+`fitbit-sync serve` then binds this machine's tailnet address, so the dashboard
+is reachable from devices on your tailnet and from nothing else. It is not on
+your local network, not on any other interface, and not on the internet. If no
+tailnet address is found, startup fails and says why rather than falling back to
+a wider address.
+
+```
+$ fitbit-sync serve
+The dashboard has no authentication. Binding 100.101.102.103 makes your health
+data readable by anything that can reach it (tailnet only).
+Dashboard on http://100.101.102.103:8722  (tailnet only)
+```
+
+Open that address from any device on the tailnet. With MagicDNS on you can use
+the machine name instead, for example `http://my-server:8722`.
+
+**The HTTPS alternative.** Leave the config alone, keep the dashboard on
+`127.0.0.1`, and let Tailscale proxy it:
+
+```bash
+fitbit-sync serve                  # still 127.0.0.1 only
+tailscale serve --bg 8722          # proxy it onto the tailnet over HTTPS
+tailscale serve status
+tailscale serve --https=443 off    # stop
+```
+
+That gives a real certificate and a MagicDNS hostname, and the listening socket
+never leaves loopback. Prefer it if you want HTTPS; prefer `tailscale = true` if
+you want one config line and no second process.
+
+**Do not run `tailscale funnel`.** Funnel publishes the service to the public
+internet. This dashboard has no authentication and shows your health data, so
+funnel would make all of it world readable to anyone with the URL.
+
+Everyone on your tailnet can reach the dashboard, including devices you have
+shared with other people. Tailscale ACLs are the way to narrow that if your
+tailnet is not only yours.
+
+### Reaching it over the LAN instead
+
+`expose_lan = true` binds `0.0.0.0`, which serves the dashboard to everything on
+the local network. Tailscale is the better answer in almost every case. Do not
+port forward either one.
 
 ### Units
 
@@ -293,7 +345,8 @@ The settings worth knowing:
 | `sync.max_requests_per_minute` | `60` | Raise or lower to match your live quota |
 | `sync.skip_data_types` | `[]` | Skip data types you do not care about |
 | `auth.extra_scopes` | `[]` | `["ecg"]` and `["irn"]` add those data types |
-| `server.expose_lan` | `false` | `true` serves the dashboard on the LAN |
+| `server.tailscale` | `false` | `true` binds this machine's tailnet address, reachable from your tailnet only |
+| `server.expose_lan` | `false` | `true` serves the dashboard on the LAN. `tailscale` wins if both are set |
 
 ---
 

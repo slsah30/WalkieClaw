@@ -72,3 +72,84 @@ def test_rebuild_recomputes_the_derived_table(tmp_path, capsys):
         "resting_hr"
     ] == 51
     conn.close()
+
+
+def _serve_config(tmp_path, server_toml: str):
+    """A config whose database exists, so serve gets past its first check."""
+    import sqlite3
+
+    database = tmp_path / "db.sqlite3"
+    sqlite3.connect(database).close()
+    config = tmp_path / "config.toml"
+    config.write_text(f'[database]\npath = "{database}"\n\n[server]\n{server_toml}')
+    return config
+
+
+def test_serve_binds_the_tailnet_address_when_tailscale_is_set(tmp_path, capsys, monkeypatch):
+    from fitbit_pipeline import net
+
+    monkeypatch.setattr(net, "tailscale_ipv4", lambda: "100.101.102.103")
+    bound = {}
+
+    def fake_run(app, host, port, **kwargs):
+        bound["host"], bound["port"] = host, port
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    config = _serve_config(tmp_path, "tailscale = true\nport = 9000\n")
+    assert cli.main(["--config", str(config), "serve"]) == 0
+    assert bound == {"host": "100.101.102.103", "port": 9000}
+    out = capsys.readouterr().out
+    assert "tailnet only" in out
+    assert "no authentication" in out
+
+
+def test_serve_refuses_rather_than_widening_the_bind_when_tailscale_is_absent(
+    tmp_path, capsys, monkeypatch
+):
+    """A missing tailnet address must never silently fall back to 0.0.0.0."""
+    from fitbit_pipeline import net
+
+    def boom():
+        raise net.TailscaleError("no tailnet address; try tailscale up")
+
+    monkeypatch.setattr(net, "tailscale_ipv4", boom)
+    import uvicorn
+
+    def must_not_run(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("uvicorn must not start without a resolved bind address")
+
+    monkeypatch.setattr(uvicorn, "run", must_not_run)
+    config = _serve_config(tmp_path, "tailscale = true\n")
+    assert cli.main(["--config", str(config), "serve"]) == 1
+    assert "tailscale up" in capsys.readouterr().out
+
+
+def test_tailscale_takes_precedence_over_expose_lan(tmp_path, monkeypatch):
+    from fitbit_pipeline import net
+
+    monkeypatch.setattr(net, "tailscale_ipv4", lambda: "100.5.5.5")
+    bound = {}
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, host, port, **kw: bound.update(host=host))
+    config = _serve_config(tmp_path, "tailscale = true\nexpose_lan = true\n")
+    assert cli.main(["--config", str(config), "serve"]) == 0
+    assert bound["host"] == "100.5.5.5"
+
+
+def test_explicit_host_flag_overrides_tailscale(tmp_path, monkeypatch):
+    from fitbit_pipeline import net
+
+    def must_not_probe():  # pragma: no cover
+        raise AssertionError("--host was given, tailnet detection should not run")
+
+    monkeypatch.setattr(net, "tailscale_ipv4", must_not_probe)
+    bound = {}
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, host, port, **kw: bound.update(host=host))
+    config = _serve_config(tmp_path, "tailscale = true\n")
+    assert cli.main(["--config", str(config), "serve", "--host", "127.0.0.1"]) == 0
+    assert bound["host"] == "127.0.0.1"

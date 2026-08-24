@@ -5,7 +5,11 @@
 
 [Unit]
 Description=Fitbit pipeline dashboard
-After=network.target
+# tailscaled must be up before the dashboard can bind the tailnet address.
+# Harmless when server.tailscale is false: a missing unit in After/Wants is
+# not an error.
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
 
 [Service]
 Type=simple
@@ -15,7 +19,11 @@ WorkingDirectory=/opt/fitbit-pipeline
 Environment=FITBIT_SYNC_CONFIG=/opt/fitbit-pipeline/config.toml
 ExecStart=/opt/fitbit-pipeline/.venv/bin/fitbit-sync serve
 Restart=on-failure
+# The tailnet address can take a moment to appear after tailscaled starts,
+# so let the restart loop ride that out instead of failing the unit.
 RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 NoNewPrivileges=true
 PrivateTmp=true

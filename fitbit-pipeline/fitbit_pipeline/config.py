@@ -87,8 +87,15 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8722
     expose_lan: bool = False
+    tailscale: bool = False
 
     def bind_host(self) -> str:
+        """The configured bind address, ignoring tailscale.
+
+        Resolving the tailnet address needs to shell out, so it stays out of
+        config parsing and happens in the serve command, where a failure can
+        be reported with a remedy instead of a traceback.
+        """
         return "0.0.0.0" if self.expose_lan else self.host
 
 

@@ -43,8 +43,15 @@ base_url = ""
 [server]
 host = "127.0.0.1"
 port = 8722
-# Set true to bind 0.0.0.0 and serve the dashboard on the LAN.
+# Set true to bind 0.0.0.0 and serve the dashboard on the LAN. Prefer
+# tailscale below: it reaches your other devices without exposing the
+# dashboard to everything else on the local network.
 expose_lan = false
+# Set true to bind this machine's Tailscale address, so the dashboard is
+# reachable from your tailnet and nowhere else. Startup fails with a clear
+# message if no tailnet address is found, rather than falling back to a
+# wider bind address. Takes precedence over expose_lan.
+tailscale = false
 
 [report]
 # IANA timezone used to label days in reports. Empty means read it from the
