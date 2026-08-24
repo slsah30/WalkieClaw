@@ -8,10 +8,10 @@
     <p class="sub">{{ day }}</p>
   </div>
   <form class="controls" method="get" action="/day">
-    <a class="nav-day {{ '' if previous else 'disabled' }}" href="/day?date={{ previous }}">Previous day</a>
+    <a class="nav-day {% if not previous %}disabled{% endif %}"{% if previous %} href="/day?date={{ previous }}"{% endif %}>Previous day</a>
     <input type="date" name="date" value="{{ day }}">
     <button type="submit">Go</button>
-    <a class="nav-day {{ '' if following else 'disabled' }}" href="/day?date={{ following }}">Next day</a>
+    <a class="nav-day {% if not following %}disabled{% endif %}"{% if following %} href="/day?date={{ following }}"{% endif %}>Next day</a>
     <a class="button ghost" href="/export/daily.csv?start={{ day }}&end={{ day }}">CSV</a>
   </form>
 </div>
