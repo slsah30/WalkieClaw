@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% set active = 'status' %}
+{% block title %}Sync status{% endblock %}
+{% block content %}
+<h1>Sync status</h1>
+<p class="sub">What the pipeline has fetched, and how the last runs went</p>
+
+<div class="card">
+  <h2>Per data type</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Data type</th><th>Last success</th><th>Synced through</th><th>Earliest data</th>
+      <th>Backfill</th><th class="num">Records</th></tr></thead>
+    <tbody>
+    {% for state in states %}
+      <tr>
+        <td>{{ state.data_type }}</td>
+        <td>{{ state.last_success_at or 'never' }}</td>
+        <td>{{ state.synced_through or 'n/a' }}</td>
+        <td>{{ state.earliest_data_date or 'n/a' }}</td>
+        <td>{% if state.backfill_complete %}complete{% elif state.backfill_cursor %}at {{ state.backfill_cursor }}{% else %}not started{% endif %}</td>
+        <td class="num">{{ state.total_records }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Recent runs</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Started</th><th>Mode</th><th>Status</th><th>Range</th>
+      <th class="num">API calls</th><th class="num">Records</th><th class="num">Pages</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for run in runs %}
+      <tr>
+        <td>{{ run.started_at }}</td>
+        <td>{{ run.mode }}</td>
+        <td>{{ run.status }}</td>
+        <td>{{ run.range_start }} to {{ run.range_end }}</td>
+        <td class="num">{{ run.api_calls }}</td>
+        <td class="num">{{ run.records }}</td>
+        <td class="num">{{ run.raw_pages }}</td>
+        <td>{{ (run.error or '')[:80] }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

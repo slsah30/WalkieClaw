@@ -1,0 +1,26 @@
+{
+  "dataPoints": [
+    {
+      "heartRate": {
+        "beatsPerMinute": "62",
+        "sampleTime": {
+          "physicalTime": "2026-08-17T13:00:00Z",
+          "utcOffset": "-18000s",
+          "civilTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 8}}
+        },
+        "metadata": {"motionContext": "SEDENTARY", "sensorLocation": "WRIST"}
+      }
+    },
+    {
+      "heartRate": {
+        "beatsPerMinute": "118",
+        "sampleTime": {
+          "physicalTime": "2026-08-17T13:01:00Z",
+          "utcOffset": "-18000s",
+          "civilTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 8, "minutes": 1}}
+        },
+        "metadata": {"motionContext": "ACTIVE", "sensorLocation": "WRIST"}
+      }
+    }
+  ]
+}

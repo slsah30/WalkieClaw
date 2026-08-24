@@ -1,0 +1,46 @@
+{
+  "dataPoints": [
+    {
+      "dataPointName": "users/me/dataTypes/sleep/dataPoints/sleep-2026-08-17",
+      "sleep": {
+        "type": "STAGES",
+        "interval": {
+          "startTime": "2026-08-17T04:12:00Z",
+          "endTime": "2026-08-17T11:48:00Z",
+          "startUtcOffset": "-18000s",
+          "endUtcOffset": "-18000s",
+          "civilStartTime": {"date": {"year": 2026, "month": 8, "day": 16}, "time": {"hours": 23, "minutes": 12}},
+          "civilEndTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 6, "minutes": 48}}
+        },
+        "metadata": {
+          "mainSleep": true,
+          "nap": false,
+          "processed": true,
+          "manuallyEdited": false,
+          "stagesStatus": "SUCCEEDED",
+          "externalId": "44556677"
+        },
+        "stages": [
+          {"type": "LIGHT", "startTime": "2026-08-17T04:12:00Z", "endTime": "2026-08-17T05:30:00Z", "startUtcOffset": "-18000s", "endUtcOffset": "-18000s"},
+          {"type": "DEEP", "startTime": "2026-08-17T05:30:00Z", "endTime": "2026-08-17T06:40:00Z", "startUtcOffset": "-18000s", "endUtcOffset": "-18000s"},
+          {"type": "REM", "startTime": "2026-08-17T06:40:00Z", "endTime": "2026-08-17T07:50:00Z", "startUtcOffset": "-18000s", "endUtcOffset": "-18000s"},
+          {"type": "AWAKE", "startTime": "2026-08-17T07:50:00Z", "endTime": "2026-08-17T08:04:00Z", "startUtcOffset": "-18000s", "endUtcOffset": "-18000s"},
+          {"type": "LIGHT", "startTime": "2026-08-17T08:04:00Z", "endTime": "2026-08-17T11:48:00Z", "startUtcOffset": "-18000s", "endUtcOffset": "-18000s"}
+        ],
+        "summary": {
+          "minutesAsleep": "442",
+          "minutesAwake": "14",
+          "minutesInSleepPeriod": "456",
+          "minutesToFallAsleep": "9",
+          "minutesAfterWakeUp": "3",
+          "stagesSummary": [
+            {"type": "LIGHT", "minutes": "302", "count": "18"},
+            {"type": "DEEP", "minutes": "70", "count": "4"},
+            {"type": "REM", "minutes": "70", "count": "5"},
+            {"type": "AWAKE", "minutes": "14", "count": "6"}
+          ]
+        }
+      }
+    }
+  ]
+}

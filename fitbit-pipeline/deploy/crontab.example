@@ -1,0 +1,16 @@
+# Cron alternative to the systemd timer. Install with: crontab -e
+#
+# Cron runs with a minimal environment, so give it absolute paths and point it
+# at the config explicitly. Logs go to a file because cron mail is easy to miss.
+
+FITBIT_SYNC_CONFIG=/opt/fitbit-pipeline/config.toml
+FITBIT_SYNC_LOGGING_FORMAT=json
+
+# Daily incremental sync at 06:30.
+30 6 * * * /opt/fitbit-pipeline/.venv/bin/fitbit-sync daily >> /opt/fitbit-pipeline/data/sync.log 2>&1
+
+# Optional: a second run in the evening catches a watch that synced late.
+# 30 20 * * * /opt/fitbit-pipeline/.venv/bin/fitbit-sync daily >> /opt/fitbit-pipeline/data/sync.log 2>&1
+
+# Optional: weekly reminder that the backfill is still incomplete.
+# 0 9 * * 0 /opt/fitbit-pipeline/.venv/bin/fitbit-sync status >> /opt/fitbit-pipeline/data/status.log 2>&1

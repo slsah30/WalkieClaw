@@ -1,0 +1,66 @@
+# fitbit-pipeline configuration.
+# Copy to config.toml and edit. Every value below is the built in default,
+# so an empty config.toml is valid.
+#
+# Any value can be overridden by an environment variable named
+# FITBIT_SYNC_<SECTION>_<KEY>, for example FITBIT_SYNC_DATABASE_PATH.
+
+[auth]
+# Downloaded from Google Cloud console, OAuth client of type "Desktop app".
+client_secret_file = "./secrets/client_secret.json"
+# Where the refresh token is written. Created 0600 inside a 0700 directory.
+token_file = "./secrets/token.json"
+# Optional extra scopes. Recognized: "ecg", "irn", "location".
+# Each one widens the consent screen, so they are off by default.
+extra_scopes = []
+# Loopback port for the one time browser consent. 0 picks a free port.
+oauth_local_port = 0
+
+[database]
+path = "./data/fitbit.sqlite3"
+
+[sync]
+# Incremental sync window. Sleep posts after wake and phone syncs run late,
+# so re-reading the last few days is what keeps the database honest.
+window_days = 3
+# Reconciled stream selection. One of: all-sources, google-wearables, google-sources.
+data_source_family = "all-sources"
+# Read through :reconcile where the data type allows it. Falls back to list.
+prefer_reconciled = true
+# Client side throttle. Raise or lower once the live quota is known.
+max_requests_per_minute = 60
+# Retry budget for 429 and 5xx responses.
+max_retries = 6
+# Lower bound for backfill. Leave empty to use the account creation date
+# reported by users/me/profile.
+backfill_start = ""
+# Data types to skip entirely, by data type id, for example ["exercise"].
+skip_data_types = []
+# API root override. Only for pointing at a local mock server during testing.
+# Leave empty to talk to https://health.googleapis.com/v4.
+base_url = ""
+
+[server]
+host = "127.0.0.1"
+port = 8722
+# Set true to bind 0.0.0.0 and serve the dashboard on the LAN. Prefer
+# tailscale below: it reaches your other devices without exposing the
+# dashboard to everything else on the local network.
+expose_lan = false
+# Set true to bind this machine's Tailscale address, so the dashboard is
+# reachable from your tailnet and nowhere else. Startup fails with a clear
+# message if no tailnet address is found, rather than falling back to a
+# wider bind address. Takes precedence over expose_lan.
+tailscale = false
+
+[report]
+# IANA timezone used to label days in reports. Empty means read it from the
+# Google Health account settings, falling back to the host timezone.
+timezone = ""
+
+[logging]
+# "json" for machine readable run logs, "text" for a readable console.
+format = "text"
+level = "INFO"
+# Optional log file. Runs are always recorded in the sync_runs table too.
+file = ""

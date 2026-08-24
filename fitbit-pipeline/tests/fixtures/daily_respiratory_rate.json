@@ -1,0 +1,10 @@
+{
+  "dataPoints": [
+    {
+      "dailyRespiratoryRate": {
+        "date": {"year": 2026, "month": 8, "day": 17},
+        "breathsPerMinute": 14.6
+      }
+    }
+  ]
+}

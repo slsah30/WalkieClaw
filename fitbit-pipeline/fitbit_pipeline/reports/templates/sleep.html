@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% set active = 'sleep' %}
+{% block title %}Sleep{% endblock %}
+{% block content %}
+<div class="row">
+  <div>
+    <h1>Sleep</h1>
+    <p class="sub">{{ start }} to {{ end }}, main sleep per night</p>
+  </div>
+  <form class="controls" method="get" action="/sleep">
+    <select name="days" onchange="this.form.submit()">
+      {% for option in day_options %}
+      <option value="{{ option }}" {{ 'selected' if option == days }}>{{ option }} nights</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit">Apply</button></noscript>
+    <a class="button ghost" href="/export/sleep.csv?start={{ start }}&end={{ end }}">CSV</a>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Stage breakdown per night</h2>
+  {{ stage_chart | safe }}
+</div>
+
+<div class="card">
+  <h2>Bedtime and wake consistency</h2>
+  {{ consistency_chart | safe }}
+  <p class="note">Clock times are local. Evening bedtimes plot as negative hours before midnight, so a
+    23:40 night and a 00:20 night sit next to each other rather than at opposite ends of the axis.</p>
+</div>
+
+<div class="card">
+  <h2>Weekly averages</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Week of</th><th class="num">Nights</th><th class="num">Asleep</th>
+      <th class="num">Deep</th><th class="num">REM</th><th class="num">Light</th>
+      <th class="num">Awake</th><th class="num">Efficiency</th></tr></thead>
+    <tbody>
+    {% for week in weekly %}
+      <tr>
+        <td>{{ week.week_start }}</td>
+        <td class="num">{{ week.nights }}</td>
+        <td class="num">{{ week.minutes_asleep | hhmm }}</td>
+        <td class="num">{{ week.minutes_deep | fmt }} min</td>
+        <td class="num">{{ week.minutes_rem | fmt }} min</td>
+        <td class="num">{{ week.minutes_light | fmt }} min</td>
+        <td class="num">{{ week.minutes_awake | fmt }} min</td>
+        <td class="num">{{ week.efficiency | fmt(1) }}%</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Nights</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Date</th><th>To bed</th><th>Up</th><th class="num">Asleep</th><th class="num">In bed</th>
+      <th class="num">Deep</th><th class="num">REM</th><th class="num">Light</th><th class="num">Awake</th>
+      <th>Stages</th></tr></thead>
+    <tbody>
+    {% for night in nights %}
+      <tr>
+        <td>{{ night.local_date }}</td>
+        <td>{{ night.start_time | local_clock(night.start_utc_offset) }}</td>
+        <td>{{ night.end_time | local_clock(night.end_utc_offset) }}</td>
+        <td class="num">{{ night.minutes_asleep | hhmm }}</td>
+        <td class="num">{{ night.minutes_in_period | hhmm }}</td>
+        <td class="num">{{ night.minutes_deep | fmt }}</td>
+        <td class="num">{{ night.minutes_rem | fmt }}</td>
+        <td class="num">{{ night.minutes_light | fmt }}</td>
+        <td class="num">{{ night.minutes_awake | fmt }}</td>
+        <td>{{ night.stages_status or night.sleep_type or 'n/a' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="note">The Google Health API does not expose the Fitbit sleep score, so this report shows
+    efficiency (minutes asleep divided by minutes in bed) rather than approximating a 0 to 100 number.</p>
+</div>
+{% endblock %}

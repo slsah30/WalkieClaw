@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set active = 'trends' %}
+{% block title %}Trends{% endblock %}
+{% block content %}
+<div class="row">
+  <div>
+    <h1>Trends</h1>
+    <p class="sub">{{ start }} to {{ end }}, with 7, 30, and 90 day rolling averages</p>
+  </div>
+  <form class="controls" method="get" action="/trends">
+    <label for="days">Window</label>
+    <select name="days" id="days" onchange="this.form.submit()">
+      {% for option in day_options %}
+      <option value="{{ option }}" {{ 'selected' if option == days }}>{{ option }} days</option>
+      {% endfor %}
+    </select>
+    <noscript><button type="submit">Apply</button></noscript>
+  </form>
+</div>
+
+{% for panel in panels %}
+<div class="card">
+  <div class="row">
+    <h2>{{ panel.label }}</h2>
+    <div>
+      <span class="pill">latest {{ panel.summary.latest | fmt(1) }} {{ panel.unit }}</span>
+      <span class="pill">mean {{ panel.summary.mean | fmt(1) }}</span>
+      <span class="pill">range {{ panel.summary.min | fmt(1) }} to {{ panel.summary.max | fmt(1) }}</span>
+      {% if panel.summary.change is not none %}
+      <span class="pill">last 7 days vs previous 7: {{ '%+.1f' % panel.summary.change }}</span>
+      {% endif %}
+      <a class="button ghost" href="/export/trends.csv?metric={{ panel.metric }}&days={{ days }}">CSV</a>
+    </div>
+  </div>
+  {{ panel.chart | safe }}
+  <p class="note">{{ panel.summary.count }} days with a reading.</p>
+</div>
+{% endfor %}
+{% endblock %}

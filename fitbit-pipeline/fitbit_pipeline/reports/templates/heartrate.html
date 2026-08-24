@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% set active = 'heartrate' %}
+{% block title %}Heart rate {{ day }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div>
+    <h1>Intraday heart rate</h1>
+    <p class="sub">{{ day }}, {{ sample_count }} samples, {{ granularity }}</p>
+  </div>
+  <form class="controls" method="get" action="/heartrate">
+    <a class="nav-day {% if not previous %}disabled{% endif %}"{% if previous %} href="/heartrate?date={{ previous }}"{% endif %}>Previous day</a>
+    <input type="date" name="date" value="{{ day }}">
+    <button type="submit">Go</button>
+    <a class="nav-day {% if not following %}disabled{% endif %}"{% if following %} href="/heartrate?date={{ following }}"{% endif %}>Next day</a>
+    <a class="button ghost" href="/export/heartrate.csv?date={{ day }}">CSV</a>
+  </form>
+</div>
+
+<div class="card">
+  <div class="tiles">
+    <div class="tile"><div class="label">Minimum</div><div class="value">{{ stats.min | fmt }}<small>bpm</small></div></div>
+    <div class="tile"><div class="label">Average</div><div class="value">{{ stats.avg | fmt(1) }}<small>bpm</small></div></div>
+    <div class="tile"><div class="label">Maximum</div><div class="value">{{ stats.max | fmt }}<small>bpm</small></div></div>
+    <div class="tile"><div class="label">Samples</div><div class="value">{{ sample_count | fmt }}</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Every sample the API returned</h2>
+  {{ chart | safe }}
+  <p class="note">Shaded bands are the heart rate zones the API computed for this day. Nothing is
+    downsampled: the chart draws every sample stored, and the trace breaks wherever the watch stopped
+    reporting for more than ten minutes.</p>
+</div>
+
+{% if zones %}
+<div class="card">
+  <h2>Zone thresholds</h2>
+  <table>
+    <thead><tr><th>Zone</th><th class="num">From</th><th class="num">To</th></tr></thead>
+    <tbody>
+      {% for zone in zones %}
+      <tr><td>{{ zone.zone | title }}</td><td class="num">{{ zone.min_bpm }}</td><td class="num">{{ zone.max_bpm }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

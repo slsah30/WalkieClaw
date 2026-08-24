@@ -1,0 +1,42 @@
+# Daily incremental sync, run by fitbit-sync.timer.
+#
+# Install:
+#   sudo cp deploy/fitbit-sync.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fitbit-sync.timer
+#
+# Edit User, WorkingDirectory, and ExecStart to match where you installed this.
+
+[Unit]
+Description=Fitbit pipeline incremental sync
+Documentation=https://developers.google.com/health
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=travis
+Group=travis
+WorkingDirectory=/opt/fitbit-pipeline
+Environment=FITBIT_SYNC_CONFIG=/opt/fitbit-pipeline/config.toml
+Environment=FITBIT_SYNC_LOGGING_FORMAT=json
+ExecStart=/opt/fitbit-pipeline/.venv/bin/fitbit-sync daily
+
+# The sync only needs to read its config and write its database and token file.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/fitbit-pipeline/data /opt/fitbit-pipeline/secrets
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+# Google can be briefly unavailable. Retry rather than waiting a full day.
+Restart=on-failure
+RestartSec=15min
+
+[Install]
+WantedBy=multi-user.target

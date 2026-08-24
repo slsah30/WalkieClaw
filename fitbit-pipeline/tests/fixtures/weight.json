@@ -1,0 +1,14 @@
+{
+  "dataPoints": [
+    {
+      "weight": {
+        "weightGrams": 81646.6,
+        "sampleTime": {
+          "physicalTime": "2026-08-17T12:30:00Z",
+          "utcOffset": "-18000s",
+          "civilTime": {"date": {"year": 2026, "month": 8, "day": 17}, "time": {"hours": 7, "minutes": 30}}
+        }
+      }
+    }
+  ]
+}

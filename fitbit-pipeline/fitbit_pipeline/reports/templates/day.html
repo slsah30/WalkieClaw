@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% set active = 'day' %}
+{% block title %}{{ day }} summary{% endblock %}
+{% block content %}
+<div class="row">
+  <div>
+    <h1>Daily summary</h1>
+    <p class="sub">{{ day }}</p>
+  </div>
+  <form class="controls" method="get" action="/day">
+    <a class="nav-day {% if not previous %}disabled{% endif %}"{% if previous %} href="/day?date={{ previous }}"{% endif %}>Previous day</a>
+    <input type="date" name="date" value="{{ day }}">
+    <button type="submit">Go</button>
+    <a class="nav-day {% if not following %}disabled{% endif %}"{% if following %} href="/day?date={{ following }}"{% endif %}>Next day</a>
+    <a class="button ghost" href="/export/daily.csv?start={{ day }}&end={{ day }}">CSV</a>
+  </form>
+</div>
+
+{% if not summary %}
+<div class="card"><p class="note">No data stored for {{ day }}. Run <code>fitbit-sync daily</code> or pick another day.</p></div>
+{% else %}
+<div class="card">
+  <div class="tiles">
+    <div class="tile"><div class="label">Steps</div><div class="value">{{ summary.steps | fmt }}</div></div>
+    <div class="tile"><div class="label">Distance</div><div class="value">{{ summary.distance_mm | miles }}<small>mi</small></div></div>
+    <div class="tile"><div class="label">Floors</div><div class="value">{{ summary.floors | fmt }}</div></div>
+    <div class="tile"><div class="label">Calories</div><div class="value">{{ summary.calories_total_kcal | fmt }}<small>kcal</small></div></div>
+    <div class="tile"><div class="label">Active zone minutes</div><div class="value">{{ summary.azm_total | fmt }}</div></div>
+    <div class="tile"><div class="label">Resting heart rate</div><div class="value">{{ summary.resting_hr | fmt }}<small>bpm</small></div></div>
+    <div class="tile"><div class="label">HRV (RMSSD)</div><div class="value">{{ summary.hrv_rmssd_ms | fmt(1) }}<small>ms</small></div></div>
+    <div class="tile"><div class="label">Sleep</div><div class="value">{{ summary.sleep_minutes_asleep | hhmm or 'n/a' }}</div></div>
+    <div class="tile"><div class="label">Sleep efficiency</div><div class="value">{{ summary.sleep_efficiency | fmt(1) }}<small>%</small></div></div>
+    <div class="tile"><div class="label">SpO2</div><div class="value">{{ summary.spo2_avg_percent | fmt(1) }}<small>%</small></div></div>
+    <div class="tile"><div class="label">Breathing rate</div><div class="value">{{ summary.breathing_rate | fmt(1) }}<small>br/min</small></div></div>
+    <div class="tile"><div class="label">Skin temp variation</div><div class="value">{{ summary.skin_temp_delta_c | delta_f }}<small>F</small></div></div>
+    <div class="tile"><div class="label">Weight</div><div class="value">{{ summary.weight_grams | pounds }}<small>lb</small></div></div>
+    <div class="tile"><div class="label">Heart rate range</div><div class="value">{{ summary.hr_min | fmt }} to {{ summary.hr_max | fmt }}</div></div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Heart rate through the day</h2>
+    {{ hr_chart | safe }}
+    <p class="note">{{ sample_count if sample_count is defined else summary.hr_sample_count }} samples stored, {{ granularity }}.
+      <a href="/heartrate?date={{ day }}">Open the full intraday view</a>.</p>
+  </div>
+  <div class="card">
+    <h2>Sleep stages</h2>
+    {{ sleep_chart | safe }}
+    {% if sessions %}
+    <p class="note">
+      Asleep {{ sessions[0].minutes_asleep | hhmm }} of {{ sessions[0].minutes_in_period | hhmm }} in bed.
+      {{ sessions | length }} session(s) recorded.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Active zone minutes by zone</h2>
+  <div class="tiles">
+    {% for zone in ['FAT_BURN', 'CARDIO', 'PEAK'] %}
+    <div class="tile"><div class="label">{{ zone | replace('_', ' ') | title }}</div>
+      <div class="value">{{ azm.get(zone, 0) | fmt }}</div></div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if workouts %}
+<div class="card">
+  <h2>Workouts</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Started</th><th>Activity</th><th class="num">Duration</th><th class="num">Distance</th>
+      <th class="num">Calories</th><th class="num">Avg heart rate</th><th class="num">AZM</th></tr></thead>
+    <tbody>
+    {% for workout in workouts %}
+      <tr>
+        <td>{{ workout.start_time | local_clock(workout.start_utc_offset) }}</td>
+        <td>{{ workout.display_name or workout.exercise_type }}</td>
+        <td class="num">{{ (workout.duration_seconds / 60) | fmt }} min</td>
+        <td class="num">{{ workout.distance_mm | miles }} mi</td>
+        <td class="num">{{ workout.calories_kcal | fmt }}</td>
+        <td class="num">{{ workout.average_hr_bpm | fmt }}</td>
+        <td class="num">{{ workout.active_zone_minutes | fmt }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{% if stages %}
+<div class="card">
+  <h2>Sleep stage timeline</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Stage</th><th>Start</th><th>End</th><th class="num">Minutes</th></tr></thead>
+    <tbody>
+      {% for stage in stages %}
+      <tr>
+        <td>{{ stage.stage | title }}</td>
+        <td>{{ stage.start_time | local_clock(stage.utc_offset) }}</td>
+        <td>{{ stage.end_time | local_clock(stage.utc_offset) }}</td>
+        <td class="num">{{ (stage.duration_seconds / 60) | fmt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

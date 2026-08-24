@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Fitbit pipeline{% endblock %}</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eceff3;
+  --border: #d8dde5;
+  --text: #1a1f27;
+  --muted: #5d6775;
+  --accent: #1f6feb;
+  --series-1: #1f6feb;
+  --series-2: #12876f;
+  --series-3: #a8560c;
+  --series-muted: #b3bcc9;
+  --stage-deep: #2c4f9e;
+  --stage-rem: #5a8fd6;
+  --stage-light: #9fc0e8;
+  --stage-awake: #d9a441;
+  --zone-light: rgba(31, 111, 235, 0.10);
+  --zone-moderate: rgba(18, 135, 111, 0.12);
+  --zone-vigorous: rgba(214, 137, 16, 0.14);
+  --zone-peak: rgba(200, 60, 60, 0.14);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151a;
+    --surface: #191d24;
+    --surface-2: #212731;
+    --border: #2c333e;
+    --text: #e6e9ee;
+    --muted: #98a2b3;
+    --accent: #6ea8ff;
+    --series-1: #6ea8ff;
+    --series-2: #4fd1b0;
+    --series-3: #f0a860;
+    --series-muted: #49525f;
+    --stage-deep: #4a76d4;
+    --stage-rem: #79a8e8;
+    --stage-light: #a7c8f0;
+    --stage-awake: #e0b45c;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+header.top {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+header.top nav { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+header.top a.brand { font-weight: 650; margin-right: 18px; text-decoration: none; color: var(--text); }
+header.top nav a {
+  padding: 14px 12px;
+  text-decoration: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+header.top nav a:hover { color: var(--text); }
+header.top nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+main { max-width: 1180px; margin: 0 auto; padding: 22px 20px 60px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 0 0 12px; font-weight: 620; }
+.sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+.row { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 12px; }
+.tile { background: var(--surface-2); border-radius: 8px; padding: 12px 14px; }
+.tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tile .value { font-size: 22px; font-weight: 620; margin-top: 3px; }
+.tile .value small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+.chart { width: 100%; height: auto; display: block; }
+.grid { stroke: var(--border); stroke-width: 1; }
+.axis { fill: var(--muted); font-size: 11px; }
+.axis-title { fill: var(--muted); font-size: 12px; }
+.chart-empty { fill: var(--muted); font-size: 13px; }
+.line { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.line.hr { stroke: var(--series-1); stroke-width: 1.4; }
+.point { fill: var(--series-1); opacity: .72; }
+.fit { stroke: var(--series-3); stroke-width: 2; stroke-dasharray: 6 4; }
+.zone { opacity: 1; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+form.controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+select, input[type=date], input[type=number] {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: inherit;
+}
+button, a.button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 13px;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+a.button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+a.nav-day { color: var(--accent); text-decoration: none; font-size: 14px; }
+a.nav-day.disabled { color: var(--muted); pointer-events: none; }
+.pill { display: inline-block; background: var(--surface-2); border-radius: 20px; padding: 2px 10px; font-size: 12px; color: var(--muted); }
+.note { color: var(--muted); font-size: 13px; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 18px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <nav>
+    <a class="brand" href="/day">Fitbit pipeline</a>
+    <a href="/day" class="{{ 'active' if active == 'day' }}">Daily summary</a>
+    <a href="/trends" class="{{ 'active' if active == 'trends' }}">Trends</a>
+    <a href="/sleep" class="{{ 'active' if active == 'sleep' }}">Sleep</a>
+    <a href="/heartrate" class="{{ 'active' if active == 'heartrate' }}">Heart rate</a>
+    <a href="/correlations" class="{{ 'active' if active == 'correlations' }}">Correlations</a>
+    <a href="/status" class="{{ 'active' if active == 'status' }}">Status</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+<p class="note">
+  Data covers {{ span[0] or 'no days yet' }} to {{ span[1] or 'no days yet' }}.
+  All measurements shown in imperial units. Stored values keep the units the API returns.
+</p>
+</main>
+</body>
+</html>

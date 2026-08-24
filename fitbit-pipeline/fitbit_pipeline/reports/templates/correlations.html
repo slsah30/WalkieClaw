@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% set active = 'correlations' %}
+{% block title %}Correlations{% endblock %}
+{% block content %}
+<div class="row">
+  <div>
+    <h1>Correlations</h1>
+    <p class="sub">{{ start }} to {{ end }}, {{ count }} paired days</p>
+  </div>
+  <form class="controls" method="get" action="/correlations">
+    <select name="x">
+      {% for key, meta in metrics.items() %}
+      <option value="{{ key }}" {{ 'selected' if key == x }}>{{ meta.label }}</option>
+      {% endfor %}
+    </select>
+    <span class="note">against</span>
+    <select name="y">
+      {% for key, meta in metrics.items() %}
+      <option value="{{ key }}" {{ 'selected' if key == y }}>{{ meta.label }}</option>
+      {% endfor %}
+    </select>
+    <label for="lag">lag</label>
+    <select name="lag" id="lag">
+      {% for option in range(0, 8) %}
+      <option value="{{ option }}" {{ 'selected' if option == lag }}>{{ option }} day</option>
+      {% endfor %}
+    </select>
+    <select name="days">
+      {% for option in day_options %}
+      <option value="{{ option }}" {{ 'selected' if option == days }}>{{ option }} days</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Plot</button>
+    <a class="button ghost" href="/export/correlations.csv?x={{ x }}&y={{ y }}&lag={{ lag }}&days={{ days }}">CSV</a>
+  </form>
+</div>
+
+<div class="card">
+  <div class="row">
+    <h2>{{ metrics[x].label }} against {{ metrics[y].label }}{% if lag %}, {{ lag }} day later{% endif %}</h2>
+    <div>
+      <span class="pill">Pearson r {{ r | fmt(3) }}</span>
+      <span class="pill">{{ count }} pairs</span>
+    </div>
+  </div>
+  {{ chart | safe }}
+  <p class="note">
+    A lag of {{ lag }} pairs each day's {{ metrics[x].label | lower }} with the
+    {{ metrics[y].label | lower }} recorded {{ lag }} day(s) later. Correlation is not causation, and with
+    a single person's data a strong r usually means a shared cause such as a hard week or an illness.
+  </p>
+</div>
+{% endblock %}
