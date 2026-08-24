@@ -406,3 +406,26 @@ def test_local_clock_applies_the_stored_offset():
     assert local_clock("2026-08-22T10:54:00Z", None) == "10:54"
     assert local_clock("2026-08-22T10:54:00Z", "banana") == "10:54"
     assert local_clock(None, "-14400s") == "n/a"
+
+
+def test_window_pickers_offer_the_full_span_of_stored_data(conn):
+    """A fixed ladder topping out at two years would hide most of a 2015 account."""
+    from datetime import date, timedelta
+
+    from fitbit_pipeline import db
+    from fitbit_pipeline.reports import queries
+
+    first, last = date(2015, 11, 15), date(2026, 8, 23)
+    for day in (first, last):
+        db.upsert(conn, "daily_summary", {"date": day.isoformat(), "steps": 100}, ("date",))
+
+    span = queries.days_of_history(conn)
+    assert span == (last - first).days + 1
+    # Selecting that span must land exactly on the first day, not a day either side.
+    assert last - timedelta(days=span - 1) == first
+
+
+def test_days_of_history_is_none_on_an_empty_database(conn):
+    from fitbit_pipeline.reports import queries
+
+    assert queries.days_of_history(conn) is None

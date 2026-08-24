@@ -112,6 +112,15 @@ def parse_day(value: str | None, conn: sqlite3.Connection) -> str:
     return queries.latest_day_with_data(conn) or date.today().isoformat()
 
 
+def _day_options(base: set[int], conn: sqlite3.Connection) -> list[int]:
+    """Window choices, including the full span of stored data when there is more."""
+    options = set(base)
+    span = queries.days_of_history(conn)
+    if span:
+        options = {d for d in options if d <= span} | {span}
+    return sorted(options)
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     config = config or load_config()
     app = FastAPI(title="Fitbit pipeline", docs_url=None, redoc_url=None)
@@ -206,7 +215,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.get("/trends", response_class=HTMLResponse)
     def trends_view(
         request: Request,
-        days: int = Query(90, ge=7, le=1095),
+        days: int = Query(90, ge=7, le=20000),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> HTMLResponse:
         end = queries.latest_day_with_data(conn) or date.today().isoformat()
@@ -244,7 +253,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             request,
             "trends.html",
             days=days,
-            day_options=sorted({30, 90, 180, 365, 730, days}),
+            day_options=_day_options({30, 90, 180, 365, 730, days}, conn),
             start=start,
             end=end,
             panels=panels,
@@ -287,7 +296,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             request,
             "sleep.html",
             days=days,
-            day_options=sorted({14, 30, 60, 90, 180, days}),
+            day_options=_day_options({14, 30, 60, 90, 180, days}, conn),
             start=start,
             end=end,
             nights=list(reversed(nights)),
@@ -346,7 +355,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         x: str = Query("steps"),
         y: str = Query("sleep_minutes"),
         lag: int = Query(1, ge=0, le=7),
-        days: int = Query(180, ge=14, le=1095),
+        days: int = Query(180, ge=14, le=20000),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> HTMLResponse:
         if x not in queries.METRICS or y not in queries.METRICS:
@@ -373,7 +382,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             y=y,
             lag=lag,
             days=days,
-            day_options=sorted({30, 90, 180, 365, 730, days}),
+            day_options=_day_options({30, 90, 180, 365, 730, days}, conn),
             start=start,
             end=end,
             count=len(pairs),
@@ -462,7 +471,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.get("/export/trends.csv")
     def export_trends(
         metric: str = Query("resting_hr"),
-        days: int = Query(90, ge=7, le=1095),
+        days: int = Query(90, ge=7, le=20000),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Response:
         if metric not in queries.METRICS:
@@ -485,7 +494,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         x: str = Query("steps"),
         y: str = Query("sleep_minutes"),
         lag: int = Query(1, ge=0, le=7),
-        days: int = Query(180, ge=14, le=1095),
+        days: int = Query(180, ge=14, le=20000),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Response:
         if x not in queries.METRICS or y not in queries.METRICS:

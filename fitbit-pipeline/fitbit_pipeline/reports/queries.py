@@ -81,6 +81,25 @@ def latest_day_with_data(conn: sqlite3.Connection) -> str | None:
     return row["date"] if row else None
 
 
+def days_of_history(conn: sqlite3.Connection) -> int | None:
+    """How many days the database actually spans.
+
+    The window pickers offer this so a full backfill is reachable from the UI.
+    A fixed ladder topping out at two years would hide most of an account that
+    goes back to 2015.
+    """
+    row = conn.execute(
+        "SELECT MIN(date) AS first, MAX(date) AS last FROM daily_summary "
+        "WHERE steps IS NOT NULL OR sleep_minutes_asleep IS NOT NULL"
+    ).fetchone()
+    if not row or not row["first"] or not row["last"]:
+        return None
+    from datetime import date as _date
+
+    span = (_date.fromisoformat(row["last"]) - _date.fromisoformat(row["first"])).days + 1
+    return span if span > 0 else None
+
+
 def sync_status(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return rows_to_dicts(
         conn.execute("SELECT * FROM sync_state ORDER BY data_type")
