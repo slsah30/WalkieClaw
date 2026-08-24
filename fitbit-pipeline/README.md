@@ -86,21 +86,44 @@ This takes about ten minutes and costs nothing.
    are printed by `fitbit-sync doctor` and documented in `docs/api-findings.md`.
 5. Test users: add your own Google address. Click **Save and continue**.
 
-### 5. Publish the app, which is what keeps the refresh token alive
+### 5. Leave the app in Testing, and add yourself as a test user
 
-**Do not skip this.** While the publishing status is **Testing**, Google expires
-every refresh token after **7 days**, and the daily sync would stop working after
-a week.
+**Do not publish the app to production.** Every `googlehealth.*` scope is
+classified **Restricted**. Google blocks consent for restricted scopes on an
+unverified app that is In production, with:
 
-1. Still on **OAuth consent screen**, find **Publishing status**.
-2. Click **Publish app**, then confirm.
-3. The status becomes **In production**. You will see a note about verification.
-   Ignore it. Verification is only required to serve *other people*; an unverified
-   production app works for its owner, and refresh tokens issued by a production
-   app do not expire on a schedule.
+> Access blocked: (app name) has not completed the Google verification process
 
-The one visible consequence is an "Google hasn't verified this app" warning at
-the single consent screen in step 7. That is expected.
+There is no **Advanced** / **unsafe** escape from that screen. Restricted scopes
+in production require full verification plus a third party CASA security
+assessment, which is priced for companies serving other people, not for one
+person reading their own data.
+
+Testing is the configuration that works:
+
+1. Still on **OAuth consent screen**, confirm **Publishing status** is **Testing**.
+   If you already published, use **Back to testing**.
+2. Under **Test users** (called **Audience** in the newer console layout), click
+   **Add users** and add your own Google address, the same personal account your
+   Fitbit data lives on.
+
+Test users can consent to restricted scopes on an unverified app. The visible
+consequence is the "Google hasn't verified this app" warning at the single
+consent screen in step 7, which you click through via **Advanced**. That is
+expected.
+
+**The cost of Testing: refresh tokens expire after 7 days.** Google expires every
+refresh token issued by an app in Testing status, so the unattended daily sync
+stops roughly weekly and you re-run `fitbit-sync auth --force`. `fitbit-sync
+doctor` prints the token's age so you can see it coming, and a failed sync says
+exactly this rather than printing a stack trace.
+
+This is a genuine limitation of the Health API for personal use, not a
+misconfiguration. Google's Health API documentation describes a **personal use
+exception** to restricted scope verification; if you want to pursue a
+longer lived setup, <https://developers.google.com/health/app-verification> is
+the authoritative page, and it is worth re-reading before accepting the weekly
+re-auth as permanent.
 
 ### 6. Create the OAuth client
 
@@ -316,20 +339,29 @@ applied automatically, inside a transaction, on the next run.
 
 ## Troubleshooting
 
+**`Access blocked: (app) has not completed the Google verification process`.**
+The app is published **In production** with restricted Health scopes, which
+Google blocks for unverified apps. Set the publishing status back to **Testing**
+and add your address under **Test users** (setup step 5), then retry. There is no
+click through option on this screen; the status has to change.
+
 **`invalid_grant: Token has been expired or revoked` after about a week.**
-The OAuth consent screen is still in Testing publishing status. Publish the app
-to production (setup step 5), then run `fitbit-sync auth --force`.
-`fitbit-sync doctor` prints the refresh token's age, which makes this obvious.
+Expected on this setup. Apps in Testing status get refresh tokens that expire
+after 7 days, and Testing is the only status that permits restricted scopes
+without verification. Run `fitbit-sync auth --force` to re-consent.
+`fitbit-sync doctor` prints the refresh token's age so you can re-auth before the
+next sync fails rather than after.
 
 **`Error 403: access_denied` at the consent screen.**
-The account is not on the test user list and the app is still in Testing, or you
-signed in with a different account. Publish the app, or add the address under
-Test users.
+The account is not on the test user list, or you signed in with a different
+account than the one you added. Add the address under **Test users**, and check
+which account the browser was signed in as.
 
 **"Google hasn't verified this app".**
-Expected for a personal app. Click **Advanced**, then **Go to (app name) (unsafe)**.
-Health scopes are classified Restricted, so verification would mean a full
-security assessment. That is for apps serving other people.
+Expected for a personal app, and safe to click through: **Advanced**, then
+**Go to (app name) (unsafe)**. This is the warning interstitial, not the hard
+block described above. Health scopes are Restricted, so real verification would
+mean a full CASA security assessment, which is for apps serving other people.
 
 **`fitbit-sync auth` refuses with a Workspace account message.**
 The Health API does not support Google Workspace accounts. Sign in with the

@@ -239,16 +239,42 @@ requires a Google Workspace organization, and the Health API does not support
 Workspace accounts at all (section 6). Service accounts are also out, because there
 is no domain wide delegation path to a personal Google account's health data.
 
-**Chosen configuration: publish the app to "In production" and leave it unverified.**
-Publishing status, not verification status, is what governs refresh token lifetime.
-An unverified production app still issues non expiring refresh tokens; the cost is
-the unverified app interstitial at the single consent, plus a 100 user cap that is
-irrelevant at one user. The README walks through this click by click.
+**Correction, confirmed against a live consent attempt on 2026-08-24.** An earlier
+draft of this document concluded that publishing the app to "In production" and
+leaving it unverified would yield non expiring refresh tokens. That is wrong for
+restricted scopes. An unverified production app requesting `googlehealth.*` scopes
+does not reach the consent screen at all; Google returns:
 
-Mitigations built in regardless, because this is the most likely thing to break:
+> Access blocked: (app name) has not completed the Google verification process
+
+with no **Advanced** / **unsafe** click through. The interstitial that can be
+clicked through only appears for an app in **Testing**. So the two states are:
+
+| Publishing status | Restricted scope consent | Refresh token lifetime |
+| --- | --- | --- |
+| Testing, requester is a test user | Works, after the unverified interstitial | 7 days |
+| In production, unverified | Hard blocked | n/a |
+| In production, verified | Works | Long lived |
+
+Reaching the third row requires Google verification plus a third party CASA
+security assessment. That is not reachable for a single user personal project.
+
+**Chosen configuration: Testing, with the owner added as a test user, and the 7 day
+re-auth accepted as an operational cost.** This does mean acceptance criterion 1
+("30+ days later, daily sync still runs without human interaction") cannot be met as
+written against the Health API today. The honest restatement is that the sync runs
+unattended for up to 7 days at a time, and needs one browser consent per week.
+
+Google's Health API documentation describes a **personal use exception** to
+restricted scope verification (<https://developers.google.com/health/app-verification>).
+Whether that exception can be exercised to get a long lived token for a single user
+app was not resolvable from this environment and is the open item worth chasing
+before treating the weekly re-auth as permanent.
+
+Mitigations built in, because this is now a routine event rather than a failure:
 
 - `fitbit-sync doctor` reports the age of the stored refresh token and warns when it
-  approaches 7 days, which is the signature of an app still stuck in Testing.
+  approaches 7 days.
 - An `invalid_grant` on refresh is caught and re-raised with the exact remedy text
   rather than a stack trace.
 
