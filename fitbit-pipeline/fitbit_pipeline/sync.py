@@ -101,13 +101,73 @@ class Syncer:
     def fetch_range(
         self, data_type: DataType, start: date, end: date, *, persist: bool = True
     ) -> TypeResult:
+        """Read [start, end) for one data type, splitting the range on a 5xx.
+
+        The reconcile endpoint returns 500 on some ranges purely because of
+        their width: a fourteen day window fails while both seven day halves
+        and every individual day in it succeed. Retrying the identical request
+        never clears that, and because the backfill walks strictly backward, a
+        single unservable chunk would otherwise make every older day for that
+        data type permanently unreachable.
+
+        So halve the range and try again. At a single day, where there is
+        nothing left to split, fall back to the list method, which serves
+        ranges reconcile refuses. Only when both fail on one day is the range
+        genuinely unreadable.
+        """
+        span = (end - start).days
+        try:
+            return self._fetch_range_once(
+                data_type, start, end, persist=persist, prefer_reconciled=self.prefer_reconciled
+            )
+        except ApiError as exc:
+            if exc.status < 500 or span <= 1:
+                if exc.status >= 500 and span <= 1 and self.prefer_reconciled:
+                    log.warning(
+                        "reconcile failed on a single day, falling back to list",
+                        extra={"data_type": data_type.api_id, "date": start.isoformat()},
+                    )
+                    return self._fetch_range_once(
+                        data_type, start, end, persist=persist, prefer_reconciled=False
+                    )
+                raise
+
+        midpoint = start + timedelta(days=span // 2)
+        log.warning(
+            "splitting a range the API would not serve",
+            extra={
+                "data_type": data_type.api_id,
+                "range": f"{start} to {end}",
+                "midpoint": midpoint.isoformat(),
+            },
+        )
+        left = self.fetch_range(data_type, start, midpoint, persist=persist)
+        right = self.fetch_range(data_type, midpoint, end, persist=persist)
+
+        merged = TypeResult(data_type=data_type.api_id)
+        merged.method = left.method or right.method
+        merged.records = left.records + right.records
+        merged.api_calls = left.api_calls + right.api_calls
+        merged.pages = left.pages + right.pages
+        merged.dates_touched = left.dates_touched | right.dates_touched
+        return merged
+
+    def _fetch_range_once(
+        self,
+        data_type: DataType,
+        start: date,
+        end: date,
+        *,
+        persist: bool = True,
+        prefer_reconciled: bool = True,
+    ) -> TypeResult:
         """Read [start, end) for one data type and write what comes back."""
         result = TypeResult(data_type=data_type.api_id)
         calls_before = self.client.api_calls
         page_index = 0
 
         for method, page in self.client.iter_pages(
-            data_type, start, end, prefer_reconciled=self.prefer_reconciled
+            data_type, start, end, prefer_reconciled=prefer_reconciled
         ):
             result.method = method
             points = data_points(page)

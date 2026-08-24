@@ -145,11 +145,13 @@ def test_backfill_resumes_where_an_interrupted_run_stopped(conn, fixture_client)
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        # Fail hard on the third steps request, simulating a kill.
+        # Drop the connection on the third steps request, simulating a kill.
+        # A 500 would not do: fetch_range now splits an unservable range and
+        # recovers from it, which is the opposite of an interruption.
         steps_calls = [c for c in calls if "/steps/" in c.url.path]
         if len(steps_calls) == 3 and failures["n"] == 0:
             failures["n"] += 1
-            return httpx.Response(500, json={})
+            raise httpx.ConnectError("connection lost", request=request)
         return httpx.Response(200, json={"dataPoints": []})
 
     from fitbit_pipeline.api import HealthApiClient
@@ -371,3 +373,106 @@ def test_calories_total_stays_null_when_basal_is_missing(conn):
     assert row["calories_active_kcal"] == 456.0
     assert row["calories_basal_kcal"] is None
     assert row["calories_total_kcal"] is None
+
+
+def test_an_unservable_range_is_split_rather_than_abandoned(conn, monkeypatch):
+    """A 500 that depends on range width must not strand every older day.
+
+    The backfill walks backward, so abandoning the data type on one bad chunk
+    would make all remaining history permanently unreachable.
+    """
+    import httpx
+
+    from fitbit_pipeline.api import HealthApiClient
+    from tests.conftest import FakeCredentials
+
+    seen: list[tuple[str, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Recover the requested span from the filter the client built.
+        import re
+
+        stamps = sorted(set(re.findall(r"\d{4}-\d{2}-\d{2}", str(request.url))))
+        span = 0
+        if len(stamps) >= 2:
+            span = (date.fromisoformat(stamps[-1]) - date.fromisoformat(stamps[0])).days
+        reconcile = str(request.url).endswith(":reconcile") or ":reconcile" in str(request.url)
+        seen.append(("reconcile" if reconcile else "list", span))
+        if reconcile and span > 7:
+            return httpx.Response(500, json={"error": {"message": "internal"}})
+        return httpx.Response(200, json={"dataPoints": []})
+
+    client = HealthApiClient(
+        FakeCredentials(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=lambda _s: None,
+        max_retries=0,
+    )
+    client._limiter._sleep = lambda _s: None
+
+    syncer = Syncer(conn, client)
+    dt = BY_ID["active-minutes"]
+    # A fourteen day window: too wide to serve, both halves fine.
+    result = syncer.fetch_range(dt, date(2023, 3, 14), date(2023, 3, 28))
+
+    spans = [s for _m, s in seen]
+    assert 14 in spans, "the wide range should have been attempted first"
+    assert 7 in spans, "it should then have been split into halves"
+    assert result.data_type == "active-minutes"
+
+
+def test_a_single_day_reconcile_failure_falls_back_to_list(conn):
+    """With nothing left to split, list serves ranges reconcile refuses."""
+    import httpx
+
+    from fitbit_pipeline.api import HealthApiClient
+    from tests.conftest import FakeCredentials
+
+    methods: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if ":reconcile" in url:
+            methods.append("reconcile")
+            return httpx.Response(500, json={"error": {"message": "internal"}})
+        methods.append("list")
+        return httpx.Response(200, json={"dataPoints": []})
+
+    client = HealthApiClient(
+        FakeCredentials(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=lambda _s: None,
+        max_retries=0,
+    )
+    client._limiter._sleep = lambda _s: None
+
+    syncer = Syncer(conn, client)
+    syncer.fetch_range(BY_ID["active-minutes"], date(2023, 3, 14), date(2023, 3, 15))
+    assert "reconcile" in methods and "list" in methods
+
+
+def test_a_client_error_is_not_split(conn):
+    """Splitting is for 5xx. A 400 means the request is wrong at any width."""
+    import httpx
+
+    from fitbit_pipeline.api import ApiError, HealthApiClient
+    from tests.conftest import FakeCredentials
+
+    attempts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(str(request.url))
+        return httpx.Response(400, json={"error": {"message": "bad filter"}})
+
+    client = HealthApiClient(
+        FakeCredentials(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=lambda _s: None,
+        max_retries=0,
+    )
+    client._limiter._sleep = lambda _s: None
+
+    syncer = Syncer(conn, client)
+    with pytest.raises(ApiError):
+        syncer.fetch_range(BY_ID["active-minutes"], date(2023, 3, 1), date(2023, 3, 29))
+    assert len(attempts) <= 2, "a 400 must not fan out into a bisect storm"
