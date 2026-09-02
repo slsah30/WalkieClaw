@@ -47,3 +47,6 @@ docker-compose.override.yml
 # OS files
 Thumbs.db
 .DS_Store
+
+# Instagram carousel exports (intentionally tracked)
+!/instagram-carousel-milk/export/*.png
