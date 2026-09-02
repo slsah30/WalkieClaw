@@ -50,3 +50,4 @@ Thumbs.db
 
 # Instagram carousel exports (intentionally tracked)
 !/instagram-carousel-milk/export/*.png
+!/instagram-carousel-milk/preview.png
