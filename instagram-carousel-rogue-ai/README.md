@@ -33,7 +33,7 @@ This is the second version. The first one was judged beautiful and confusing, so
 
 10 slides, plain English. A few things to agree with your family tonight.
 
-Labels: AI SCAMS · WHAT TO EXPECT, WHAT TO DO   |   1 / 10   |   @yourhandle
+Labels: AI SCAMS · WHAT TO EXPECT, WHAT TO DO   |   1 / 10
 
 Seen alone: A stranger seeing only this slide, even at thumbnail size, knows the carousel is about AI scams that fake a voice, a face or an email, and that it will show how to check whether it is really them.
 
@@ -45,7 +45,7 @@ Alt text: Cover slide on a cream background. Huge black capitals read: AI scams 
 
 Bad spelling used to be the giveaway. It's gone. Proof now comes from a number you look up yourself.
 
-Labels: THE THREATS · ALL FOUR   |   2 / 10   |   @yourhandle
+Labels: THE THREATS · ALL FOUR   |   2 / 10
 
 Seen alone: A person seeing only this slide learns the four things AI can now fake convincingly, and that spotting a fake by how it looks or sounds no longer works.
 
@@ -57,7 +57,7 @@ Alt text: Slide reading: Anything you see or hear can be faked. A four-item list
 
 The name and number on your screen can be faked too. Call his own number from your contacts — or another relative.
 
-Labels: WHAT YOU DO · AGREEMENT 1 OF 2   |   3 / 10   |   @yourhandle
+Labels: WHAT YOU DO · AGREEMENT 1 OF 2   |   3 / 10
 
 Seen alone: A person seeing only this slide learns that a panicked voice and the name on the screen can both be faked, and that the fix is to hang up and call a number they already had — their own contact for the person, or the number on their bank card.
 
@@ -69,7 +69,7 @@ Alt text: Slide reading: Hang up. Call back on a number you already had. A red t
 
 Any one of these is a reason to slow down. Two or three together: stop and check.
 
-Labels: WHAT YOU DO · THE THREE-WORD TEST   |   4 / 10   |   @yourhandle
+Labels: WHAT YOU DO · THE THREE-WORD TEST   |   4 / 10
 
 Seen alone: A person seeing only this slide learns the three-part pattern — urgency, secrecy, and money or a code — that means stop, hang up and call back on a number they looked up themselves.
 
@@ -81,7 +81,7 @@ Alt text: Slide showing three huge stacked words with plus signs: urgent, secret
 
 A copied voice sounds exactly like your son on the phone. It does not know what he knows. Pick something you never posted.
 
-Labels: WHAT YOU DO · AGREEMENT 2 OF 2   |   5 / 10   |   @yourhandle
+Labels: WHAT YOU DO · AGREEMENT 2 OF 2   |   5 / 10
 
 Seen alone: A person seeing only this slide learns to agree a private question with their family now, why it works against a copied voice, and what to do if the answer is wrong — hang up and call the person themselves.
 
@@ -93,7 +93,7 @@ Alt text: Slide reading: Agree one question only your family can answer. A sligh
 
 A deepfake is a computer-made face and voice, live on a call. A worker at the engineering firm Arup paid about US$25 million.
 
-Labels: A REAL CASE · ARUP, HONG KONG, 2024   |   6 / 10   |   @yourhandle
+Labels: A REAL CASE · ARUP, HONG KONG, 2024   |   6 / 10
 
 Seen alone: A person seeing only this slide learns what a deepfake is, that a live video of a familiar face can be fake — it happened at Arup in Hong Kong in 2024 for about US$25 million — and that the answer is to hang up and call back.
 
@@ -105,7 +105,7 @@ Alt text: Slide reading: A face on a video call is not proof. Four video-call wi
 
 The six-digit code your bank texts you is the last lock on your account. No one legitimate will ever ask for it.
 
-Labels: WHAT YOU DO · CODES AND PASSWORDS   |   7 / 10   |   @yourhandle
+Labels: WHAT YOU DO · CODES AND PASSWORDS   |   7 / 10
 
 Seen alone: A person seeing only this slide learns never to say a verification code out loud to an incoming caller, why a different password on every site matters, what a passkey is, and where on their phone to turn one on.
 
@@ -117,7 +117,7 @@ Alt text: Slide reading: Never read a code to anyone who called you. Body text s
 
 An AI assistant reads your email and acts for you. Orders hidden in a message — or sitting in plain sight — can take it over.
 
-Labels: THE THREAT · ONLY IF YOU USE AN AI APP   |   8 / 10   |   @yourhandle
+Labels: THE THREAT · ONLY IF YOU USE AN AI APP   |   8 / 10
 
 Seen alone: A person seeing only this slide learns what an AI assistant is, that it can obey instructions arriving in anything it reads whether hidden or visible, and two things to do: withhold card and passwords, and require it to ask before it acts.
 
@@ -129,7 +129,7 @@ Alt text: Slide reading: Your own AI can follow a stranger's orders. Body text e
 
 Total taken: 0.00. None of it worked.
 
-Labels: RECAP · THEM, AND YOU   |   9 / 10   |   @yourhandle
+Labels: RECAP · THEM, AND YOU   |   9 / 10
 
 Seen alone: A person seeing only this slide learns five specific AI scam moves and the exact response to each, laid out side by side and named in the biggest type on the slide.
 
@@ -141,7 +141,7 @@ Alt text: Slide reading: What they try. What you do. A white receipt with two co
 
 If it already happened: call your bank first, then report it at reportfraud.ftc.gov and ic3.gov. No shame — AI scams are built to beat clever people.
 
-Labels: KEEP THIS · SEND IT ON   |   10 / 10   |   @yourhandle
+Labels: KEEP THIS · SEND IT ON   |   10 / 10
 
 Seen alone: A person receiving only this slide as a screenshot learns the two agreements and why each one works, what to do first if they have already been scammed, and where to report it — with the reporting sites at full body size.
 
@@ -173,7 +173,7 @@ Screenshot slide 10 and send it to whoever would call you at six in the morning.
 |---|---|---|
 | Paper Cream | `#F5EFE2` | Background of all ten slides. Never anything else. |
 | Ink Black | `#121110` | All headlines, all body copy, all 8px outlines, and the instruction bars on slides 3, 4, 5, 9 and 10. |
-| Alarm Red | `#D93A20` | Only ever sits directly behind or beside a word that already says FAKE or ORDERS PUT THERE BY THE ATTACKER — slides 3, 6 and 8. Never used alone, never for emphasis, never on an action. |
+| Alarm Red | `#C4321B` | Only ever sits directly behind or beside a word that already says FAKE or ORDERS PUT THERE BY THE ATTACKER — slides 3, 6 and 8. Never used alone, never for emphasis, never on an action. |
 | Do-It Green | `#0F6B4F` | Only ever sits behind words that already say what to do — the action bars on slides 1, 6 and 8. Never anything else. |
 | Chalk White | `#FFFDF7` | Cards and panels only: the fake-call card (3), the example card (5), the two-step panel (7), the receipt (9), the fill-in card (10). |
 | Soft Grey | `#C9C0AE` | Hairlines, the pretend ruled text inside the drawn email (8), the receipt's leaders (9) and the fill-in rules (10). Decoration only — carries no meaning anywhere in the deck. |
