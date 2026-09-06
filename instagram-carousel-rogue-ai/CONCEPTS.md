@@ -251,3 +251,75 @@ Working:
 ## Winner: SAYS WHO?
 
 Ten comic-book speech bubbles whose words are always perfect and whose tails are always the giveaway: a carousel that installs one reflex, "perfect words prove nothing, look where the bubble comes from," teaches the colour law on slide 2 (tangerine tail = a source you can't check, green tail = something you already own), and ends with a 0.00 receipt and a fridge card that is safe to screenshot because the only secret on it stays in your head.
+
+
+---
+
+# Revision: the cold-read study that forced a rewrite
+
+The first build of this deck (concept "SAYS WHO?") was judged beautiful and unclear. Five readers were shown only the ten rendered PNGs — no script, no caption, no context — and asked what the carousel was about.
+
+## Result
+
+| Reader | Confidence it knew the topic | What they thought slide 1 was |
+|---|---|---|
+| scroller | 6/10 | After slide 1 alone: someone's son is in trouble and messaging his mum — I thought it was a story, maybe a sho |
+| parent | 6/10 | After slide 1 alone I thought: this is a warning about phone scams where someone fakes your child's voice to g |
+| screenshot | 6/10 | After slide 1 alone: someone's kid (or a voice clone of him) is ringing home in a panic — I read it as an emot |
+| skimmer | 7/10 | After slide 1 alone: I genuinely thought this was about a distressed kid phoning home — a family/mental-health |
+| teacher | 8/10 | After slide 1 alone: a phone scam where a criminal fakes your kid's voice and number to panic you into sending |
+
+Per-slide clarity, averaged (10 = instantly obvious):
+
+| Slide | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Score | 6.8 | 3.8 | 6.8 | 4.6 | 6.6 | 7.2 | 5.8 | 4.2 | 6.8 | 6.6 |
+
+## Root causes
+
+- The topic is never named. The words AI, scam, fraud and voice clone appear nowhere in large type on slide 1 — and the word AI appears nowhere in the whole deck, including the two slides that are entirely about it. Slide 1 also sits outside the deck's own system: no counter, no chips, no framing line. It reads as a stand-alone emotional post rather than the cover of a warning.
+- The biggest text on the page is the criminal's script, not the lesson. On slides 1, 2, 4 and 7 the largest words are the attacker speaking. The correction is demoted to small body copy at the bottom. Every skimming reader took the lie at face value; one scored slide 1 at 3/10 — 'the headline is the scam itself, with zero large-text framing that it's fake.'
+- The deck's argument is carried by an unexplained colour code. Orange = untrusted source, green = the thing you verify against, purple = the AI. None of the three is ever stated in words. Four of five readers reverse-engineered it around slide 5–6, after misreading three slides; one never got it at all. As one put it: they missed the actual argument, and it was in the colours.
+- Invented vocabulary, used with total confidence and never defined. SOURCE and ANCHOR appear on seven slides as if they were standard English. ANCHOR is the deck's central concept and no slide says what an anchor is. Slide 2 says 'here you can see the tail' about a speech-bubble convention that was never introduced — one reader went looking for an animal. Undefined jargon makes readers feel slow, and they stop swiping.
+- The URGENT / SECRET / MONEY chips run as a header on slides 2, 3 and 4 before slide 5 explains them — the decoder arrives three slides late. They were read as hashtags, a progress bar and a running tally. Their states are also inconsistent (all three lit on slide 2, one lit on 3/4/7, all black plus a new green SAFE TO SEND on slide 10), so the one reader who worked out the rule was then contradicted by it.
+- It is two decks stitched together. Slides 1, 2, 3, 5, 6, 7 are about a human impersonating a human. Slides 4 and 8 are about your own software obeying a stranger. Every reader flagged the jump at slide 4 as topic whiplash; two wondered whether they had been sent slides from a different carousel. The only bridge is one line of small print on slide 3.
+- The cast changes without introduction. Slide 1 is a mother and her son; slide 2 is suddenly 'your boss' and a supplier; slide 3 is a CFO on a corporate video call. Three consecutive slides address people at work, and they sit directly in front of slides 5 and 6, which contain the advice a general audience can actually use. Two readers said they nearly stopped swiping there.
+- The strongest, most actionable line in the deck — urgent + secret + money = hang up — is stranded on slide 5, after four slides of unexplained apparatus. Readers form a wrong model in the first four slides and then have to unlearn it.
+- Slides do not stand alone. Slide 5's payoff only works if you hold 06:41 from slide 1 in your head; slide 6's headline ('What did we call the goldfish?') is a non-sequitur without slide 5; slide 10 says 'send it to whoever would pick up at 06:41', nine slides later. Instagram slides are shared and screenshotted one at a time, and alone most of these are a stylish image with a vague sense of unease.
+- Threats are named without fixes, and fixes are named without instructions. Slide 4 names a threat and offers no action (the fix arrives four slides later). Slides 7 and 8 name actions no ordinary reader can perform: 'passkey' is never defined, and 'give it its own inbox' names no product, app or setting. Readers absorbed those as anxiety with nothing attached.
+- Decoration is competing with meaning at the same visual weight. The five orange pipes on slide 3, the severed tail plus scissors plus ribbon at the top of slide 5, the dashed ghost shapes bleeding off slides 1/3/5 — every reader listed these as things they tried and failed to decode. Several read slide 5's top third as a printing error before they read it as an idea.
+- The recap audits a deck that wasn't delivered. Slide 9 scores 'OLD PASSWORD, TRIED EVERYWHERE / DIFFERENT ONE PER SITE' — a rule no earlier slide teaches — and the orange/green arrow pairing is still never labelled attack and defence.
+- Nobody is speaking. There is no handle, logo, byline or credential anywhere. 'SAYS WHO?' was read as a brand, a series title, a rebuttal and an instruction — all four readings stayed live to the end, so the deck's own name is ambiguous and its authority is zero.
+
+## Kept in the rewrite
+
+- The core behaviour rule, which is the reason to post at all: hang up and ring back on a number you already had, not the one that rang you; for a bank, the number on the back of your card. Every one of the five readers took this away and could repeat it.
+- The shared question (slide 6). 'What did we call the goldfish?' — a cloned voice has his voice, not his memories. The single clearest, most actionable idea in the deck; four readers said they would actually do it.
+- The tell: urgent + secret + money = stop. The only headline that was simultaneously big, self-explanatory and actionable. Keep the formula, move it forward, and keep it as a headline.
+- The 06:41 voice-clone scene and its 06:45 payoff — the real son ringing back, sleepy, four minutes later. It is the emotional engine of the deck. Keep it, but label the specimen as fake on the slide where it appears and put both halves close enough that the payoff can't be missed.
+- The Arup Hong Kong 2024 deepfake video call, about US$25m. Concrete, dated, sourced, and the thing readers said they would repeat to someone else. Keep the fact; explain 'CFO' as 'the finance boss'.
+- The receipt (slide 9). Highest clarity score in the deck and the format readers liked best: attack on one line, what you did instead on the next, TOTAL 0.00, 'Thank you for nothing.' Keep it — with every line traceable to a slide that actually taught it, and the two columns labelled in words.
+- 'Never read a code out to someone who rang you.' Short, complete, memorable, no prerequisites.
+- The fill-in card as the closing artefact: OUR QUESTION / CALL BACK ON, plus 'if it happens: bank first, no shame, this is built to beat smart people.' The instinct is right; only the mechanics need fixing.
+- The plain, declarative writing voice — short sentences, concrete nouns, no fear-mongering. Where the deck is understood, it is because of the sentences.
+- The visual identity itself: the cream ground, heavy black outlines, speech bubbles, monospace labels, the confident poster-like scale. Nobody disliked the look; every reader called it beautiful. The problem is that the system is unexplained, not that it is wrong.
+
+## Cut in the rewrite
+
+- The words SOURCE and ANCHOR. Both are invented labels for ideas that already have plain English: 'where it came from' and 'a way to check that you chose'. Remove the terms entirely.
+- The word 'tail' and the whole speech-bubble-tail-as-origin metaphor, including the fat orange tails, the green tails, the severed tail and the dashed ghost tails bleeding off the canvas.
+- Colour as the sole carrier of meaning. Orange/green/purple may stay decorative, but nothing may mean anything unless a word on that slide says so.
+- The URGENT / SECRET / MONEY header chips as a running system across slides. They may appear once, as the formula on their own slide, and nowhere else. Kill SAFE TO SEND outright.
+- The whole office cast: 'your boss', the supplier, the 5 o'clock invoice, 'her actual desk', the stick figure at a desk. Keep only the phrase 'keep this between us' as a tell, freed from any workplace scene.
+- Slide 2 as it stands. It teaches vocabulary and a visual pun before the reader has a reason to care, and it is where readers said the deck loses them.
+- The undecoded icon set: the scissors (slides 5, 8), the green spiral-with-a-key (7), the five orange pipes (3), the WORD FOR WORD quote-mark panel (2), the dashed empty box with three dots (6), the tiny house (6), all dashed ghost shapes, and the blank round faces used for both real and fake people.
+- The word 'passkey' used without a definition, and the four-step passkey setup instructions in small print. Either define it in one plain sentence and give one step, or cut it.
+- 'Put your thumb between it and anything it can't undo' and 'Machine speed, no gut feeling. So: an intern.' Metaphors readers stalled on. Say the literal thing.
+- The 'LOOK, DON'T TOUCH' sticker on slide 8, which is placed across the two things the assistant IS allowed to use, and the grey-versus-black icon convention that carries a 'never' with no word attached.
+- The password-reuse line in the receipt, unless a slide teaches it. Never recap a rule the deck did not give.
+- Cross-slide dependencies: the 06:41 callback on slide 10, the slide 5 punchline that needs slide 1, the slide 6 headline that needs slide 5.
+- 'Screenshot it blank. Fill it in on the fridge.' Readers could not work out what that means on a phone. Replace with an instruction that works where they are standing.
+
+## The rebuild
+
+Three fresh builds (editorial, poster, diagram-led) were rendered from the new script and scored by judges who never saw the script, on: is the topic obvious from slide 1, per-slide clarity, does each slide work as a lone screenshot, visual craft, legibility. The editorial build won (152 of 150 possible from three judges plus the winner bonus, against 128 and 108), was polished, and passed a comprehension QA loop in which any slide that failed the standalone test counted as a blocking defect.
